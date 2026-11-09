@@ -117,7 +117,7 @@ Sanchaya is architected as an orchestrated set of microservices communicating ov
                                          ▼
                       ┌────────────────────────────────────────┐
                       │    Node.js / Express API Gateway       │
-                      │      (services/backend: 3000)          │
+                      │      (services/backend: 5000)          │
                       └───────┬──────────────┬───────────────┬─┘
                               │              │               │
         Internal Docker Net   │              │               │
@@ -133,7 +133,7 @@ Sanchaya is architected as an orchestrated set of microservices communicating ov
 | Service | Path | Tech Stack | Port | Responsibilities |
 | :--- | :--- | :--- | :--- | :--- |
 | **`frontend`** | `services/frontend` | React 19, Vite, Tailwind CSS | `5173` | Role-aware dashboards (Leader, Outgoing, Incoming), findings review, risk & gap visualizations |
-| **`backend`** | `services/backend` | Node.js 20, TypeScript, Express | `3000` | Gateway, JWT Auth, GitHub connector, document parsers, pre-AI secret scanner |
+| **`backend`** | `services/backend` | Node.js 20, TypeScript, Express | `5000` | Gateway, JWT Auth, GitHub connector, document parsers, pre-AI secret scanner |
 | **`ai-engine`** | `services/ai-engine` | Python 3.11, FastAPI / Uvicorn | `8001` | LLM candidate extraction, JSON schema validation, gap detection & question generation |
 | **`analytics-service`** | `services/analytics-service` | Python 3.11, FastAPI / Uvicorn | `8002` | Git contribution risk metrics, 7-point readiness engine, ReportLab PDF generation |
 | **`mongo`** | Database Container | MongoDB 7.0 | `27017` | Persistent document storage for raw sources, normalized chunks, and findings |
@@ -177,7 +177,7 @@ docker compose up --build
 
 ### 4. Access the Application
 - **Frontend Dashboard:** [http://localhost:5173](http://localhost:5173)
-- **Backend Healthcheck:** [http://localhost:3000/health](http://localhost:3000/health)
+- **Backend Healthcheck:** [http://localhost:5000/health](http://localhost:5000/health)
 - **AI Engine Service:** [http://localhost:8001](http://localhost:8001)
 - **Analytics Service:** [http://localhost:8002](http://localhost:8002)
 
