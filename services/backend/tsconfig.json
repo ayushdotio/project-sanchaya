@@ -1,0 +1,67 @@
+{
+  "compilerOptions": {
+    // File Layout
+    "rootDir": "./",
+    "outDir": "./dist",
+
+    /* -------------------------------------------------------------------------- */
+    /* Environment & Runtime Settings                                             */
+    /* -------------------------------------------------------------------------- */
+    // Node.js 20 natively supports modern ES2022 syntax and features
+    "target": "es2022",
+    "lib": ["es2022"],
+
+    // Explicitly inject Node.js global types (process, Buffer, __dirname).
+    // Replaces "types": [] which previously blocked Node globals from loading.
+    "types": ["node"],
+
+    // "nodenext" enforces Node's native module resolution algorithm for ESM/CJS
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+
+    /* -------------------------------------------------------------------------- */
+    /* Module Interoperability                                                    */
+    /* -------------------------------------------------------------------------- */
+    // Enables seamless default imports from CommonJS libraries (express, morgan, mammoth).
+    // "verbatimModuleSyntax" was removed to prevent CJS/ESM import breakages.
+    "esModuleInterop": true,
+
+    // Allows importing JSON schema definitions, configuration files, and package.json
+    "resolveJsonModule": true,
+
+    /* -------------------------------------------------------------------------- */
+    /* Build Outputs (Application Target)                                         */
+    /* -------------------------------------------------------------------------- */
+    // Generates source maps so production error stack traces map to TypeScript source files
+    "sourceMap": true,
+
+    // Disabled declaration (.d.ts) emission. This is a deployable backend application,
+    // not a published npm library; emitting declarations adds compile overhead and dist clutter.
+    "declaration": false,
+    "declarationMap": false,
+    /* -------------------------------------------------------------------------- */
+    /* Typechecking & Safety Flags                                                */
+    /* -------------------------------------------------------------------------- */
+    // Enforces strict null checks, strict function types, and no implicit any
+    "strict": true,
+
+    // Accessing record/array indexes returns `T | undefined` rather than assuming `T`.
+    // Catches out-of-bound errors when reading dynamic CSV rows and parsed payloads.
+    "noUncheckedIndexedAccess": true,
+
+    // "exactOptionalPropertyTypes" was removed because Express (req.params, req.query)
+    // and Mongoose frequently set optional fields to `undefined`, which that flag disallows.
+
+    // "jsx" was removed because this service is a pure Express API, not a React client.
+
+    // Skips type checks on external definition files in node_modules for faster builds
+    "skipLibCheck": true
+  },
+
+  /* ---------------------------------------------------------------------------- */
+  /* Compilation Scope                                                            */
+  /* ---------------------------------------------------------------------------- */
+  // Only compile application code within src/, ignoring tests, dist, and dependencies
+  "include": ["src/**/*", "server.ts"],
+  "exclude": ["node_modules", "dist"]
+}
