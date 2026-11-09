@@ -1,0 +1,89 @@
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: sanchaya-mongo
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: sanchaya
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - sanchaya-network
+
+  backend:
+    build:
+      context: ./services/backend
+      target: development
+    container_name: sanchaya-backend
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=development
+      - PORT=5000
+      - MONGO_URI=${MONGO_URI}
+      - JWT_SECRET=${JWT_SECRET}
+      - AI_SERVICE_URL=http://ai-engine:8001
+      - ANALYTICS_SERVICE_URL=http://analytics-service:8002
+    volumes:
+      - ./services/backend:/app
+      - backend-node-modules:/app/node_modules
+    depends_on:
+      - mongo
+    networks:
+      - sanchaya-network
+
+  frontend:
+    build:
+      context: ./services/frontend
+    container_name: sanchaya-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:5000
+    volumes:
+      - ./services/frontend:/app
+      - frontend-node-modules:/app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - sanchaya-network
+
+  # Stubs for teammates so your backend pythonBridge works out of the box
+  ai-engine:
+    build:
+      context: ./services/ai-engine
+    container_name: sanchaya-ai-engine
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./services/ai-engine:/app
+    networks:
+      - sanchaya-network
+
+  analytics-service:
+    build:
+      context: ./services/analytics-service
+    container_name: sanchaya-analytics-service
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./services/analytics-service:/app
+    networks:
+      - sanchaya-network
+
+volumes:
+  mongo_data:
+  backend-node-modules:
+  frontend-node-modules:
+
+networks:
+  sanchaya-network:
+    driver: bridge
