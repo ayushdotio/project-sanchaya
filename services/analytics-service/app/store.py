@@ -28,6 +28,13 @@ class ProjectStore:
         with self._lock:
             self._data[pid] = project
             self.save()
+    def create(self, pid, project):
+        with self._lock:
+            if pid in self._data:
+                return False
+            self._data[pid] = project
+            self.save()
+            return True
 
     def save(self):
         if self.path:
@@ -54,6 +61,17 @@ class MongoStore:
 
     def put(self, pid, project):
         self.col.replace_one({"_id": pid}, {"_id": pid, "doc": json.dumps(project, default=str)}, upsert=True)
+    def create(self, pid, project):
+        from pymongo.errors import DuplicateKeyError
+
+        try:
+            self.col.insert_one({
+                "_id": pid,
+                "doc": json.dumps(project, default=str),
+            })
+            return True
+        except DuplicateKeyError:
+            return False
 
     def save(self):      # writes happen in put()
         pass

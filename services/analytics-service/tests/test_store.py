@@ -36,8 +36,9 @@ def test_api_works_with_mongo_store(monkeypatch):
     from app.main import app
     monkeypatch.setattr(r, "STORE", MongoStore(client=mongomock.MongoClient()))
     c = TestClient(app)
-    L = {"X-Role": "Team Leader", "X-User-Id": "lead-1"}           # role alias accepted
-    assert c.post("/projects/mg/demo").status_code == 200
+    L = {"X-Role": "Team Leader", "X-User-Id": "lead-1"}
+    monkeypatch.setenv("ENABLE_DEMO_ROUTE", "true")           # role alias accepted
+    assert c.post("/projects/mg/demo", headers=L).status_code == 200
     assert c.get("/projects/mg/risk-map", headers=L).json()["units"][0]["unit"] == "backend/payments"
     assert c.post("/projects/mg/signoff", json={"kind": "finding", "id": "F-03"}, headers=L).status_code == 200
     # change was persisted to the store, not just to memory

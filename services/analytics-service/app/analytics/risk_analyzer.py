@@ -124,7 +124,14 @@ def analyze(commits, tasks=None, departing_member=None, alias_map=None, as_of=No
     commits = list(commits or [])
     tasks = list(tasks or [])
     if as_of is None:
-        as_of = max((parse_ts(c["timestamp"]) for c in commits), default=None)
+        as_of = max(
+    (
+        parse_ts(c["timestamp"])
+        for c in commits
+        if not is_bot(c.get("author", ""), c.get("email", ""))
+    ),
+    default=None,
+)
     else:
         as_of = parse_ts(as_of)
 

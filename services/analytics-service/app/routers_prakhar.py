@@ -5,7 +5,7 @@ Auth: reads X-Role and X-User-Id headers as a stand-in until Ayush's JWT middlew
 is wired in (replace `identity()` with the JWT dependency)."""
 import os
 import tempfile
-
+from starlette.background import BackgroundTask
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -54,17 +54,42 @@ class SignOff(BaseModel):
 
 
 @router.post("/{pid}/demo")
-def load_demo(pid: str):
+def load_demo(pid: str, x_role: str = Header(None), x_user_id: str = Header(None)):
+    if os.getenv("ENABLE_DEMO_ROUTE", "false").strip().lower() not in ("1", "true", "yes"):
+        raise HTTPException(404, "Demo route is disabled")
+
+    role, _ = identity(x_role, x_user_id)
+    _require_leader(role)
+
     from data.synthetic.generate import demo_project
-    STORE.put(pid, demo_project(pid))
+
+    if not STORE.create(pid, demo_project(pid)):
+        raise HTTPException(409, "Project already exists")
+
     return {"loaded": pid}
 
 
 @router.put("/{pid}/data")
+@router.put("/{pid}/data")
 def put_data(pid: str, body: dict, x_role: str = Header(None), x_user_id: str = Header(None)):
-    role, _ = identity(x_role, x_user_id); _require_leader(role)
+    role, _ = identity(x_role, x_user_id)
+    _require_leader(role)
+
+    try:
+        existing = STORE.get(pid)
+    except KeyError:
+        existing = None
+
     body = {**body, "project_id": pid}
-    body.setdefault("approval", None); body.setdefault("versions", []); body.setdefault("receipts", [])
+
+    # Never trust client-supplied approval or handover history.
+    for field, default in (
+        ("approval", None),
+        ("versions", []),
+        ("receipts", []),
+    ):
+        body[field] = existing.get(field, default) if existing else default
+
     STORE.put(pid, body)
     return {"stored": pid}
 
@@ -158,6 +183,13 @@ def pdf(pid: str, v: int, x_role: str = Header(None), x_user_id: str = Header(No
         raise HTTPException(404, f"Version {v} does not exist")
     if role == "incoming" and evaluate(p)["state"] != "Approved for Sharing":
         raise HTTPException(403, "Handover is not approved for sharing")
-    out = os.path.join(tempfile.gettempdir(), f"handover_{pid}_v{v}.pdf")
-    generate_pdf(ver, out)
-    return FileResponse(out, media_type="application/pdf", filename=f"handover_v{v}.pdf")
+    fd, out = tempfile.mkstemp(prefix="sanchaya_handover_", suffix=".pdf")
+    os.close(fd)
+
+    try:
+        generate_pdf(ver, out)
+    except Exception:
+        os.unlink(out)
+        raise
+
+    return FileResponse(out,media_type="application/pdf",filename=f"handover_v{v}.pdf",background=BackgroundTask(os.unlink, out),)

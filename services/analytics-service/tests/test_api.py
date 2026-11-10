@@ -1,13 +1,14 @@
 from fastapi.testclient import TestClient
 from app.main import app
-
+from app.store import STORE
 c = TestClient(app)
 L = {"X-Role": "leader", "X-User-Id": "lead-1"}
 I = {"X-Role": "incoming", "X-User-Id": "u-incoming-01"}
 
 
-def test_full_flow():
-    assert c.post("/projects/api1/demo").status_code == 200
+def test_full_flow(monkeypatch):
+    monkeypatch.setenv("ENABLE_DEMO_ROUTE", "true")
+    assert c.post("/projects/api1/demo",headers=L).status_code == 200
     assert c.get("/projects/api1/risk-map").status_code == 401           # no role header
     assert c.get("/projects/api1/risk-map", headers=I).status_code == 403
     rm = c.get("/projects/api1/risk-map", headers=L).json()
@@ -37,3 +38,20 @@ def test_full_flow():
 
     pdf = c.get("/projects/api1/handover/versions/1/pdf", headers=I)
     assert pdf.status_code == 200 and pdf.content[:4] == b"%PDF"
+        # Verify PUT cannot erase approval or handover history.
+    before = STORE.get("api1")
+
+    malicious_body = {
+        **before,
+        "approval": None,
+        "versions": [],
+        "receipts": [],
+    }
+
+    update = c.put("/projects/api1/data", json=malicious_body, headers=L)
+    assert update.status_code == 200
+
+    after = STORE.get("api1")
+    assert after["approval"] == before["approval"]
+    assert after["versions"] == before["versions"]
+    assert after["receipts"] == before["receipts"]

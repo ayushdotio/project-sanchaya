@@ -32,6 +32,8 @@ def snapshot_hash(project: dict) -> str:
         "recipient": project.get("recipient"),
         "commits_digest": sha256(project.get("commits", [])),
         "alias_map": project.get("alias_map", {}),
+        "name": project.get("name"),
+        "departing_member": project.get("departing_member"),
     })
 
 
