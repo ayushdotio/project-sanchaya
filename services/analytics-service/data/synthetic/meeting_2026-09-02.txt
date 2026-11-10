@@ -1,0 +1,1 @@
+Kickoff notes. Primary DB will be PostgreSQL. Aarav owns payments. Contact aarav.k@college.edu or +91 98765 43210.

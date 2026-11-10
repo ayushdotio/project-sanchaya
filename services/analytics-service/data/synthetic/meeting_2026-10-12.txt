@@ -1,0 +1,1 @@
+Sprint review. We switched to MongoDB last sprint. API key for sandbox: sk_test_FAKE1234567890abcdef (FAKE). Redis dropped, reason not noted.

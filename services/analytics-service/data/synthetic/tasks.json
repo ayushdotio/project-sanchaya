@@ -1,0 +1,135 @@
+[
+  {
+    "id": "T-01",
+    "title": "Set up CI pipeline",
+    "assignee": "Rohan Patil",
+    "status": "done",
+    "blocker": null
+  },
+  {
+    "id": "T-02",
+    "title": "Razorpay webhook retry logic",
+    "assignee": "Aarav Kulkarni",
+    "status": "open",
+    "blocker": null
+  },
+  {
+    "id": "T-03",
+    "title": "Refund flow edge cases",
+    "assignee": "Aarav Kulkarni",
+    "status": "open",
+    "blocker": null
+  },
+  {
+    "id": "T-04",
+    "title": "Payment reconciliation report",
+    "assignee": "Aarav Kulkarni",
+    "status": "blocked",
+    "blocker": "Waiting for gateway sandbox keys (T-02)"
+  },
+  {
+    "id": "T-05",
+    "title": "Migrate legacy CSV importer",
+    "assignee": "Aarav Kulkarni",
+    "status": "open",
+    "blocker": null
+  },
+  {
+    "id": "T-06",
+    "title": "Rate limiting on login",
+    "assignee": "Meera Joshi",
+    "status": "open",
+    "blocker": null
+  },
+  {
+    "id": "T-07",
+    "title": "Event cancellation emails",
+    "assignee": null,
+    "status": "open",
+    "blocker": null
+  },
+  {
+    "id": "T-08",
+    "title": "Profile page redesign",
+    "assignee": "Sana Sheikh",
+    "status": "open",
+    "blocker": null
+  },
+  {
+    "id": "T-09",
+    "title": "Write API docs for payments",
+    "assignee": "Sana Sheikh",
+    "status": "open",
+    "blocker": null
+  },
+  {
+    "id": "T-10",
+    "title": "Accessibility audit",
+    "assignee": "Rohan Patil",
+    "status": "done",
+    "blocker": null
+  },
+  {
+    "id": "T-11",
+    "title": "Load test events endpoint",
+    "assignee": "Meera Joshi",
+    "status": "open",
+    "blocker": null
+  },
+  {
+    "id": "T-12",
+    "title": "Decide caching layer",
+    "assignee": null,
+    "status": "open",
+    "blocker": null
+  },
+  {
+    "id": "T-13",
+    "title": "Fix timezone bug in calendar",
+    "assignee": "Rohan Patil",
+    "status": "done",
+    "blocker": null
+  },
+  {
+    "id": "T-14",
+    "title": "Ticket PDF generation",
+    "assignee": "Meera Joshi",
+    "status": "blocked",
+    "blocker": null
+  },
+  {
+    "id": "T-15",
+    "title": "Dark mode",
+    "assignee": "Sana Sheikh",
+    "status": "done",
+    "blocker": null
+  },
+  {
+    "id": "T-16",
+    "title": "Set up error monitoring",
+    "assignee": "Rohan Patil",
+    "status": "open",
+    "blocker": null
+  },
+  {
+    "id": "T-17",
+    "title": "Seed data script cleanup",
+    "assignee": "Sana Sheikh",
+    "status": "done",
+    "blocker": null
+  },
+  {
+    "id": "T-18",
+    "title": "Token refresh rotation",
+    "assignee": "Meera Joshi",
+    "status": "done",
+    "blocker": null
+  },
+  {
+    "id": "T-19",
+    "title": "Deploy checklist",
+    "assignee": null,
+    "status": "open",
+    "blocker": null
+  }
+]
