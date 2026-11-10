@@ -1,0 +1,26 @@
+[
+  {
+    "source_id": "SRC-GH-01",
+    "type": "github",
+    "timestamp": "2026-11-01T12:00:00+00:00",
+    "scan_completed": true
+  },
+  {
+    "source_id": "SRC-NOTE-01",
+    "type": "meeting_note",
+    "timestamp": "2026-09-02T12:00:00+00:00",
+    "scan_completed": true
+  },
+  {
+    "source_id": "SRC-NOTE-02",
+    "type": "meeting_note",
+    "timestamp": "2026-10-12T12:00:00+00:00",
+    "scan_completed": true
+  },
+  {
+    "source_id": "SRC-CSV-01",
+    "type": "task_csv",
+    "timestamp": "2026-11-01T12:00:00+00:00",
+    "scan_completed": true
+  }
+]

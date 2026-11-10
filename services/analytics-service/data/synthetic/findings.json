@@ -1,0 +1,114 @@
+[
+  {
+    "id": "F-01",
+    "category": "decision",
+    "text": "Use FastAPI for the backend",
+    "status": "Supported",
+    "source_id": "SRC-NOTE-01",
+    "excerpt": "we agreed to go with FastAPI for speed",
+    "freshness": "aging",
+    "reviewer_signoff": false,
+    "resolved": false
+  },
+  {
+    "id": "F-02",
+    "category": "decision",
+    "text": "Use Razorpay as payment gateway",
+    "status": "Supported",
+    "source_id": "SRC-GH-01",
+    "excerpt": "commit c0007: integrate razorpay checkout",
+    "freshness": "fresh",
+    "reviewer_signoff": false,
+    "resolved": false
+  },
+  {
+    "id": "F-03",
+    "category": "decision",
+    "text": "Store sessions in Redis",
+    "status": "Needs review",
+    "source_id": "SRC-NOTE-02",
+    "excerpt": "maybe redis for sessions? not sure",
+    "freshness": "stale",
+    "reviewer_signoff": false,
+    "resolved": false
+  },
+  {
+    "id": "F-04",
+    "category": "decision",
+    "text": "Use PostgreSQL as the primary database",
+    "status": "Conflicting",
+    "source_id": "SRC-NOTE-01",
+    "excerpt": "primary DB will be PostgreSQL",
+    "freshness": "aging",
+    "reviewer_signoff": false,
+    "resolved": false,
+    "conflicts_with": "F-05"
+  },
+  {
+    "id": "F-05",
+    "category": "decision",
+    "text": "Use MongoDB as the primary database",
+    "status": "Conflicting",
+    "source_id": "SRC-NOTE-02",
+    "excerpt": "we switched to MongoDB last sprint",
+    "freshness": "fresh",
+    "reviewer_signoff": false,
+    "resolved": false,
+    "conflicts_with": "F-04"
+  },
+  {
+    "id": "F-06",
+    "category": "decision",
+    "text": "Why Redis caching was dropped",
+    "status": "Unknown",
+    "source_id": "SRC-NOTE-02",
+    "excerpt": "(no explanation found in sources)",
+    "freshness": "stale",
+    "reviewer_signoff": false,
+    "resolved": false
+  },
+  {
+    "id": "F-07",
+    "category": "dependency",
+    "text": "Payments module depends on gateway sandbox keys held by Aarav",
+    "status": "Supported",
+    "source_id": "SRC-NOTE-02",
+    "excerpt": "keys are with Aarav",
+    "freshness": "fresh",
+    "reviewer_signoff": false,
+    "resolved": false
+  },
+  {
+    "id": "F-08",
+    "category": "dependency",
+    "text": "Frontend depends on /events API shape",
+    "status": "Supported",
+    "source_id": "SRC-GH-01",
+    "excerpt": "frontend/src/Events.jsx fetches /api/events",
+    "freshness": "fresh",
+    "reviewer_signoff": false,
+    "resolved": false
+  },
+  {
+    "id": "F-09",
+    "category": "blocker",
+    "text": "Reconciliation report blocked by missing sandbox keys",
+    "status": "Supported",
+    "source_id": "SRC-CSV-01",
+    "excerpt": "T-04 blocker: waiting for gateway sandbox keys",
+    "freshness": "fresh",
+    "reviewer_signoff": false,
+    "resolved": false
+  },
+  {
+    "id": "F-10",
+    "category": "task",
+    "text": "Webhook retry logic is half-implemented",
+    "status": "Supported",
+    "source_id": "SRC-GH-01",
+    "excerpt": "TODO retry in webhook.py",
+    "freshness": "fresh",
+    "reviewer_signoff": false,
+    "resolved": false
+  }
+]
