@@ -13,13 +13,16 @@ from app.models.schemas import (
 )
 from app.services.evidence_validator import validate_evidence
 from app.services.gap_question_generator import generate_gap_question
-from app.services.freshness_monitor import is_evidence_stale
+from app.services.freshness_monitor import (
+    is_evidence_stale,
+    scan_evidence_freshness,
+)
 
 
 app = FastAPI(
     title="Sanchaya AI Engine",
     description="AI-powered knowledge extraction and evidence validation service.",
-    version="0.3.0"
+    version="0.4.0"
 )
 
 
@@ -84,6 +87,25 @@ def check_evidence_freshness(request: FreshnessCheckRequest):
 
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+
+
+@app.get("/api/v1/evidence/freshness/scan")
+def scan_all_evidence_freshness(
+    max_age_days: int = Query(default=90, ge=1, le=3650),
+    limit: int = Query(default=500, ge=1, le=1000),
+):
+    try:
+        return scan_evidence_freshness(
+            collection=evidence_collection,
+            max_age_days=max_age_days,
+            limit=limit,
+        )
+
+    except PyMongoError:
+        raise HTTPException(
+            status_code=503,
+            detail="Could not scan evidence freshness in MongoDB"
+        )
 
 
 @app.post("/api/v1/evidence/self-reported")
