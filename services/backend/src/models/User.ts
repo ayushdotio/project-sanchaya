@@ -8,6 +8,7 @@ export interface IUser extends Document {
   role: UserRole;
   resetPasswordToken?: string;
   resetPasswordExpires?: Date;
+  passwordChangedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -45,6 +46,10 @@ const UserSchema = new Schema<IUser>(
     resetPasswordExpires: {
       type: Date,
       select: false,
+    },
+    passwordChangedAt: {
+      type: Date,
+      select: false, // Not returned in standard queries; only fetched by authMiddleware
     },
   },
   {

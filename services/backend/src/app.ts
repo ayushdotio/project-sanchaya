@@ -18,6 +18,7 @@ import findingRoutes from "./routes/findings.js";
 import gapRoutes from "./routes/gaps.js";
 import readinessRoutes from "./routes/readiness.js";
 import handoverRoutes from "./routes/handover.js";
+import userRoutes from "./routes/users.js";
 
 const app = express();
 
@@ -70,6 +71,7 @@ app.use("/api/projects", findingRoutes);
 app.use("/api/projects", gapRoutes);
 app.use("/api/projects", readinessRoutes);
 app.use("/api/projects", handoverRoutes);
+app.use("/api/users", userRoutes);
 
 // Catch 404 for unmapped endpoints
 app.use((_req: Request, res: Response) => {

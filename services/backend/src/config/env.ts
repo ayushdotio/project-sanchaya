@@ -1,11 +1,35 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
+
+// Load the single root .env file regardless of which subdirectory npm is invoked from
+// (e.g. running `npm run dev` inside services/backend/ while .env lives at repo root).
+const loadEnvFile = (): void => {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 6; i++) {
+    const candidate = path.join(dir, ".env");
+    if (fs.existsSync(candidate)) {
+      dotenv.config({ path: candidate });
+      return;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  dotenv.config();
+};
+
+loadEnvFile();
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   PORT: z.coerce.number().default(5000),
   MONGO_URI: z.string().min(1).default("mongodb://127.0.0.1:27017/sanchaya"),
-  JWT_SECRET: z.string().min(8).default("sanchaya_default_jwt_secret_replace_in_production"),
+  // JWT_SECRET has no default — it MUST be explicitly set in every environment.
+  // A missing or weak secret allows anyone to forge valid tokens.
+  JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters"),
   JWT_EXPIRES_IN: z.string().default("3h"),
   BCRYPT_SALT_ROUNDS: z.coerce.number().default(12),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),

@@ -2,17 +2,62 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env.js";
 import { JWTPayload, UserRole } from "../types/auth.types.js";
+import { User } from "../models/User.js";
+import { AUTH_COOKIE_NAME } from "../controllers/auth.controller.js";
+
+const extractCookieToken = (cookieHeader: string | undefined): string | undefined => {
+  if (!cookieHeader) {
+    return undefined;
+  }
+
+  for (const part of cookieHeader.split(";")) {
+    const separatorIndex = part.indexOf("=");
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const name = part.slice(0, separatorIndex).trim();
+    if (name !== AUTH_COOKIE_NAME) {
+      continue;
+    }
+
+    const rawValue = part.slice(separatorIndex + 1).trim();
+    if (!rawValue) {
+      return undefined;
+    }
+
+    try {
+      return decodeURIComponent(rawValue);
+    } catch {
+      return rawValue;
+    }
+  }
+
+  return undefined;
+};
+
+const extractToken = (req: Request): string | undefined => {
+  const authHeader = req.headers.authorization;
+  if (authHeader) {
+    const bearerMatch = /^Bearer\s+(.+)$/i.exec(authHeader.trim());
+    if (bearerMatch?.[1]) {
+      return bearerMatch[1].trim();
+    }
+  }
+
+  return extractCookieToken(req.headers.cookie);
+};
 
 /**
- * Validates the Authorization Bearer JWT on protected routes.
+ * Validates the Authorization Bearer or Cookie JWT on protected routes.
+ * Also rejects tokens issued before a password reset (passwordChangedAt guard).
  */
-export const authenticateToken = (
+export const authenticateToken = async (
   req: Request,
   res: Response,
   next: NextFunction
-): void => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(" ")[1];
+): Promise<void> => {
+  const token = extractToken(req);
 
   if (!token) {
     res.status(401).json({
@@ -22,16 +67,41 @@ export const authenticateToken = (
     return;
   }
 
+  let decoded: JWTPayload;
   try {
-    const decoded = jwt.verify(token, env.JWT_SECRET) as JWTPayload;
-    req.user = decoded;
-    next();
+    decoded = jwt.verify(token, env.JWT_SECRET) as JWTPayload;
   } catch (_err) {
     res.status(401).json({
       success: false,
       error: "Unauthorized: Invalid or expired token",
     });
+    return;
   }
+
+  // Check if the token was issued before a password reset.
+  // Only hits the DB when passwordChangedAt is relevant — fast index lookup by _id.
+  const user = await User.findById(decoded.userId).select("+passwordChangedAt");
+  if (!user) {
+    res.status(401).json({
+      success: false,
+      error: "Unauthorized: User no longer exists",
+    });
+    return;
+  }
+
+  if (user.passwordChangedAt && decoded.iat !== undefined) {
+    const changedAt = Math.floor(user.passwordChangedAt.getTime() / 1000);
+    if (decoded.iat < changedAt) {
+      res.status(401).json({
+        success: false,
+        error: "Session invalidated. Please log in again.",
+      });
+      return;
+    }
+  }
+
+  req.user = decoded;
+  next();
 };
 
 /**
