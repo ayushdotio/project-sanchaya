@@ -67,6 +67,28 @@ class TestEvidenceValidator(unittest.TestCase):
         )
 
         self.assertEqual(result.status, EvidenceStatus.CONFLICTING)
+    def test_case_insensitive_matching(self):
+        result = validate_evidence(
+            "The team decided to use MongoDB.",
+            "THE TEAM DECIDED TO USE MONGODB.",
+            "meeting-002"
+        )
+        self.assertEqual(result.status, EvidenceStatus.SUPPORTED)
+
+    def test_whitespace_normalization(self):
+        result = validate_evidence(
+            "The team decided to use MongoDB.",
+            "The team   decided\nto use MongoDB.",
+            "meeting-003"
+        )
+        self.assertEqual(result.status, EvidenceStatus.SUPPORTED)
+    def test_partial_word_match_needs_review(self):
+        result = validate_evidence(
+            "The team decided to use MongoDB.",
+            "Mongo",
+            "meeting-004"
+        )
+        self.assertEqual(result.status, EvidenceStatus.NEEDS_REVIEW)
 
 
 if __name__ == "__main__":

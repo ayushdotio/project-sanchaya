@@ -1,4 +1,7 @@
+
+import re
 from datetime import datetime
+
 from app.models.schemas import (
     DecisionFact,
     EvidenceStatus,
@@ -6,11 +9,14 @@ from app.models.schemas import (
 )
 
 
+def normalize_text(text: str) -> str:
+    """Normalize text for case-insensitive, whitespace-tolerant matching."""
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
 
 def detect_conflict(facts: list[DecisionFact]) -> bool:
     superseded_sources = set()
 
-    # Only accept an explicit replacement from a newer record.
     for newer in facts:
         if not newer.supersedes_source_id:
             continue
@@ -32,7 +38,7 @@ def detect_conflict(facts: list[DecisionFact]) -> bool:
             ):
                 superseded_sources.add(newer.supersedes_source_id)
 
-        except ValueError:
+        except (ValueError, TypeError):
             continue
 
     decisions_by_topic: dict[str, set[str]] = {}
@@ -41,8 +47,8 @@ def detect_conflict(facts: list[DecisionFact]) -> bool:
         if fact.source_id in superseded_sources:
             continue
 
-        topic = fact.topic.strip().casefold()
-        value = fact.value.strip().casefold()
+        topic = normalize_text(fact.topic)
+        value = normalize_text(fact.value)
 
         if not topic or not value:
             continue
@@ -55,7 +61,6 @@ def detect_conflict(facts: list[DecisionFact]) -> bool:
     )
 
 
-
 def validate_evidence(
     source_text: str | None,
     evidence_excerpt: str | None,
@@ -64,7 +69,6 @@ def validate_evidence(
     facts: list[DecisionFact] | None = None,
 ) -> EvidenceValidationResult:
 
-    # Automatically check structured decision facts.
     if facts and detect_conflict(facts):
         has_conflict = True
 
@@ -89,15 +93,27 @@ def validate_evidence(
             source_id=source_id,
         )
 
-    if evidence_excerpt in source_text:
+    normalized_source = normalize_text(source_text)
+    normalized_excerpt = normalize_text(evidence_excerpt)
+
+    if normalized_excerpt and re.search(
+    r"(?<!\w)" + re.escape(normalized_excerpt) + r"(?!\w)",
+    normalized_source
+):
         return EvidenceValidationResult(
             status=EvidenceStatus.SUPPORTED,
-            explanation="Exact evidence excerpt found in the source.",
+            explanation=(
+                "Evidence excerpt matches the original source "
+                "after case and whitespace normalization."
+            ),
             source_id=source_id,
         )
 
     return EvidenceValidationResult(
         status=EvidenceStatus.NEEDS_REVIEW,
-        explanation="Evidence excerpt was not found in the source.",
+        explanation=(
+            "Evidence excerpt could not be matched to the original source. "
+            "Manual verification is required."
+        ),
         source_id=source_id,
     )
