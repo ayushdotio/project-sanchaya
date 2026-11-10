@@ -1,0 +1,7 @@
+services/ai-engine/.env
+services/ai-engine/.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+
+services/.env
