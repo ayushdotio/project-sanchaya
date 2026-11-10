@@ -10,11 +10,8 @@ const envSchema = z.object({
   BCRYPT_SALT_ROUNDS: z.coerce.number().default(12),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
   GITHUB_GLOBAL_PAT: z.string().optional(),
-  // Support both canonical and legacy environment variable names
   AI_SERVICE_URL: z.string().url().default("http://ai-engine:8001"),
-  ANALYTICS_SERVICE_URL: z.string().url().default("http://analytics-service:8002"),
-  VARAD_AI_SERVICE_URL: z.string().url().optional(),
-  PRAKHAR_ANALYTICS_SERVICE_URL: z.string().url().optional(),
+  ANALYTICS_SERVICE_URL: z.string().url().default("http://analytics-service:8002")
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -27,6 +24,6 @@ if (!parsed.success) {
 export const env = {
   ...parsed.data,
   // Resolve service URLs with fallback to legacy names if present
-  AI_SERVICE_URL: parsed.data.VARAD_AI_SERVICE_URL || parsed.data.AI_SERVICE_URL,
-  ANALYTICS_SERVICE_URL: parsed.data.PRAKHAR_ANALYTICS_SERVICE_URL || parsed.data.ANALYTICS_SERVICE_URL,
+  AI_SERVICE_URL: parsed.data.AI_SERVICE_URL,
+  ANALYTICS_SERVICE_URL: parsed.data.ANALYTICS_SERVICE_URL,
 };
