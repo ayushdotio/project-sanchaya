@@ -1,7 +1,11 @@
+
 import unittest
 
-from app.models.schemas import EvidenceStatus
-from app.services.evidence_validator import validate_evidence
+from app.models.schemas import EvidenceStatus, DecisionFact
+from app.services.evidence_validator import (
+    validate_evidence,
+    contains_negation,
+)
 
 
 class TestEvidenceValidator(unittest.TestCase):
@@ -40,8 +44,6 @@ class TestEvidenceValidator(unittest.TestCase):
         self.assertEqual(result.status, EvidenceStatus.UNKNOWN)
 
     def test_automatic_conflict_detection(self):
-        from app.models.schemas import DecisionFact
-
         facts = [
             DecisionFact(
                 topic="Database",
@@ -67,6 +69,7 @@ class TestEvidenceValidator(unittest.TestCase):
         )
 
         self.assertEqual(result.status, EvidenceStatus.CONFLICTING)
+
     def test_case_insensitive_matching(self):
         result = validate_evidence(
             "The team decided to use MongoDB.",
@@ -82,6 +85,7 @@ class TestEvidenceValidator(unittest.TestCase):
             "meeting-003"
         )
         self.assertEqual(result.status, EvidenceStatus.SUPPORTED)
+
     def test_partial_word_match_needs_review(self):
         result = validate_evidence(
             "The team decided to use MongoDB.",
@@ -89,6 +93,27 @@ class TestEvidenceValidator(unittest.TestCase):
             "meeting-004"
         )
         self.assertEqual(result.status, EvidenceStatus.NEEDS_REVIEW)
+
+    def test_detect_explicit_negation(self):
+        self.assertTrue(
+            contains_negation("The team did not approve MongoDB.")
+        )
+
+        self.assertFalse(
+            contains_negation("The team approved MongoDB.")
+        )
+
+    def test_negated_evidence_does_not_support_positive_claim(self):
+        result = validate_evidence(
+            source_text="The team did not approve MongoDB.",
+            evidence_excerpt="The team did not approve MongoDB.",
+            claim="The team approved MongoDB.",
+        )
+
+        self.assertEqual(
+            result.status,
+            EvidenceStatus.NEEDS_REVIEW
+        )
 
 
 if __name__ == "__main__":

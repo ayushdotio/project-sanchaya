@@ -58,6 +58,7 @@ class SelfReportedEvidence(BaseModel):
 class EvidenceValidationRequest(BaseModel):
     source_text: str | None = None
     evidence_excerpt: str | None = None
+    claim: str | None = None
     source_id: str | None = None
     facts: list[DecisionFact] | None = None
 
