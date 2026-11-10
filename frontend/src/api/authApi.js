@@ -22,6 +22,13 @@ export const DEMO_ACCOUNTS = [
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Expected backend response: { token, name, email, role }
+/**
+ * Sign in with the selected role. Demo mode matches email case-insensitively
+ * and returns a demo token.
+ *
+ * @throws {Error} If the credentials or selected demo role do not match, or
+ * if the backend rejects the request. Network and response parsing errors propagate.
+ */
 export async function login(email, password, role) {
   if (USE_MOCK) {
     await delay(500);

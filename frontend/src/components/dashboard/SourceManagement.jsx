@@ -19,6 +19,10 @@ import {
   removeSavedSource,
 } from "@/services/sourceStorage";
 
+/**
+ * Parse CSV preview text into rows of cells, retaining quoted commas and line
+ * breaks and decoding doubled quotes. Rows containing only blank cells are omitted.
+ */
 function parseCSV(content) {
   const rows = [];
   let row = [];

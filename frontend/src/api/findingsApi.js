@@ -161,6 +161,10 @@ async function request(path) {
   return response.json();
 }
 
+/**
+ * Return findings for review. Demo mode returns a fresh copy of the sample data.
+ * Backend request and response parsing errors propagate to the caller.
+ */
 export async function getFindings() {
   if (USE_MOCK) {
     await delay(300);
@@ -169,6 +173,10 @@ export async function getFindings() {
   return request("/findings");
 }
 
+/**
+ * Return sources referenced by findings. Demo mode returns a fresh copy of the
+ * sample data. Backend request and response parsing errors propagate to the caller.
+ */
 export async function getSources() {
   if (USE_MOCK) {
     await delay(300);

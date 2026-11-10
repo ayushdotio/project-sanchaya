@@ -39,6 +39,7 @@ const dashboardData = {
   ],
 };
 
+/** Return the shared sample dashboard data object. */
 export async function getDashboardData() {
   return dashboardData;
 }
