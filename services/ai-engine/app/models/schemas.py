@@ -1,5 +1,7 @@
+
 from datetime import date
 from enum import Enum
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -32,7 +34,7 @@ class DecisionFact(BaseModel):
     recorded_at: str
     supersedes_source_id: str | None = None
 
-from pydantic import BaseModel, Field
+
 class SelfReportedEvidence(BaseModel):
     question: str = Field(min_length=5, max_length=1000)
     answer: str = Field(min_length=2, max_length=5000)
@@ -64,3 +66,8 @@ class GapQuestionRequest(BaseModel):
     topic: str
     status: EvidenceStatus
     conflicting_values: list[str] | None = None
+
+
+class FreshnessCheckRequest(BaseModel):
+    recorded_at: str
+    max_age_days: int = Field(default=90, ge=1, le=3650)

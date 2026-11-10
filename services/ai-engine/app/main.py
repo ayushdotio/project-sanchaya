@@ -9,15 +9,17 @@ from app.models.schemas import (
     EvidenceValidationRequest,
     GapQuestionRequest,
     SelfReportedEvidence,
+    FreshnessCheckRequest,
 )
 from app.services.evidence_validator import validate_evidence
 from app.services.gap_question_generator import generate_gap_question
+from app.services.freshness_monitor import is_evidence_stale
 
 
 app = FastAPI(
     title="Sanchaya AI Engine",
     description="AI-powered knowledge extraction and evidence validation service.",
-    version="0.2.0"
+    version="0.3.0"
 )
 
 
@@ -65,6 +67,25 @@ def generate_question(request: GapQuestionRequest):
     return {"question": question}
 
 
+@app.post("/api/v1/evidence/freshness")
+def check_evidence_freshness(request: FreshnessCheckRequest):
+    try:
+        stale = is_evidence_stale(
+            recorded_at=request.recorded_at,
+            max_age_days=request.max_age_days,
+        )
+
+        return {
+            "recorded_at": request.recorded_at,
+            "max_age_days": request.max_age_days,
+            "is_stale": stale,
+            "status": "needs_review" if stale else "current",
+        }
+
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
 @app.post("/api/v1/evidence/self-reported")
 def submit_self_report(request: SelfReportedEvidence):
     evidence = {
@@ -78,6 +99,7 @@ def submit_self_report(request: SelfReportedEvidence):
     try:
         result = evidence_collection.insert_one(evidence)
         evidence["id"] = str(result.inserted_id)
+
     except PyMongoError:
         raise HTTPException(
             status_code=503,
@@ -119,7 +141,12 @@ def get_self_reported_evidence(
         filters["verification_status"] = verification_status.strip()
 
     try:
-        records = evidence_collection.find(filters).sort("_id", 1).skip(skip).limit(limit)
+        records = (
+            evidence_collection.find(filters)
+            .sort("_id", 1)
+            .skip(skip)
+            .limit(limit)
+        )
 
         return [
             {
@@ -132,6 +159,7 @@ def get_self_reported_evidence(
             }
             for record in records
         ]
+
     except PyMongoError:
         raise HTTPException(
             status_code=503,
