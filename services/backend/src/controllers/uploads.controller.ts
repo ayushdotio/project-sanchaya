@@ -1,16 +1,11 @@
-import { Router, Request, Response } from "express";
+import { Request, Response } from "express";
 import crypto from "crypto";
-import {
-  authenticateToken,
-  requireRoles,
-} from "../middlewares/authMiddleware.js";
-import { upload } from "../middlewares/uploadMiddleware.js";
-import { asyncHandler } from "../utils/asyncHandler.js";
 import { SourceRecord } from "../models/SourceRecord.js";
 import { Project } from "../models/Project.js";
 import { extractDocumentText } from "../services/documentParser.js";
 import { parseTaskCsv } from "../services/taskParser.js";
 import { scanAndRedact } from "../services/secretScanner.js";
+import { storageService } from "../services/storageService.js";
 
 /**
  * Helper to generate deterministic canonical ID: SRC-DOC-xxx or SRC-TSK-xxx
@@ -46,7 +41,16 @@ const uploadNotesController = async (
   // 2. Pre-AI Deterministic Secret & PII Scanning (Stage 1 Invariant)
   const { redactedText, redactionCount } = scanAndRedact(rawText);
 
-  // 3. Assign deterministic canonical ID & ISO-8601 timestamps
+  // 3. Upload document binary to ImageKit under /sanchaya/<projectId>
+  const projectIdStr = String(project._id);
+  const uploadedFile = await storageService.uploadDocument({
+    buffer: file.buffer,
+    fileName: file.originalname,
+    projectId: projectIdStr,
+    tags: ["sanchaya", "document", projectIdStr],
+  });
+
+  // 4. Assign deterministic canonical ID & ISO-8601 timestamps
   const now = new Date();
   const sourceRecord = await SourceRecord.create({
     projectId: project._id,
@@ -58,6 +62,9 @@ const uploadNotesController = async (
     metadata: {
       redactionCount,
       author: req.user!.email,
+      url: uploadedFile.url,
+      fileId: uploadedFile.fileId,
+      filePath: uploadedFile.filePath,
     },
     created_at: now,
     updated_at: now,
@@ -72,6 +79,9 @@ const uploadNotesController = async (
       source_id: sourceRecord.source_id,
       origin: sourceRecord.origin,
       redactionCount,
+      fileId: uploadedFile.fileId,
+      fileUrl: uploadedFile.url,
+      filePath: uploadedFile.filePath,
       created_at: sourceRecord.created_at,
     },
   });
@@ -179,9 +189,60 @@ const fetchSourceDetailsController = async (
   });
 };
 
+const listProjectDocsController = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const { projectId } = req.params;
+
+  const project = await Project.findById(projectId);
+  if (!project) {
+    res.status(404).json({ success: false, error: "Project not found" });
+    return;
+  }
+
+  const docs = await storageService.listProjectDocuments(String(project._id));
+
+  res.status(200).json({
+    success: true,
+    data: docs,
+  });
+};
+
+const fetchProjectDocController = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const { projectId, fileId } = req.params;
+
+  const project = await Project.findById(projectId);
+  if (!project) {
+    res.status(404).json({ success: false, error: "Project not found" });
+    return;
+  }
+
+  const projectIdStr = String(project._id);
+  const doc = await storageService.getDocumentDetails(String(fileId));
+  const expectedPrefix = `${storageService.getProjectFolder(projectIdStr)}/`;
+
+  if (!doc.filePath.startsWith(expectedPrefix)) {
+    res
+      .status(404)
+      .json({ success: false, error: "Document not found in project storage" });
+    return;
+  }
+
+  res.status(200).json({
+    success: true,
+    data: doc,
+  });
+};
+
 export {
   uploadNotesController,
   uploadTasksController,
   getSourcesController,
   fetchSourceDetailsController,
+  listProjectDocsController,
+  fetchProjectDocController,
 };

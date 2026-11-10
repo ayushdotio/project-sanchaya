@@ -22,6 +22,8 @@ export interface ISourceRecordMetadata {
   redactionCount: number;
   author?: string;
   url?: string;
+  fileId?: string;
+  filePath?: string;
   sha?: string;
   branch?: string;
   itemCount?: number;

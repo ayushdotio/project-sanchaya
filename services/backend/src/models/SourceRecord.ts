@@ -50,6 +50,8 @@ const SourceRecordSchema = new Schema<ISourceRecord>(
       redactionCount: { type: Number, default: 0 },
       author: { type: String, default: "" },
       url: { type: String, default: "" },
+      fileId: { type: String, default: "" },
+      filePath: { type: String, default: "" },
       sha: { type: String, default: "" },
       branch: { type: String, default: "" },
       itemCount: { type: Number, default: 0 },
