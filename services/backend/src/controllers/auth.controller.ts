@@ -4,7 +4,7 @@ import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env.js";
 import { IUser, User } from "../models/User.js";
-import { JWTPayload } from "../types/auth.types.js";
+import { JWTPayload, UserRole } from "../types/auth.types.js";
 
 export const AUTH_COOKIE_NAME = "token";
 
@@ -70,15 +70,17 @@ const issueAuthTokenAndCookie = (
   return token;
 };
 
-const registerController = async (
+/**
+ * Shared registration helper that hashes the password, persists the user with an
+ * explicitly assigned role, and issues an HttpOnly JWT cookie + response token.
+ */
+const registerUserWithRole = async (
   req: Request,
   res: Response,
+  role: UserRole,
+  successMessage: string,
 ): Promise<void> => {
   const { name, email, password } = req.body;
-  // Role is never trusted from the client on self-registration.
-  // All users register as "incoming" by default.
-  // Promotion to "leader" or "outgoing" must go through a protected admin route.
-  const role = "incoming" as const;
 
   const passwordHash = await bcrypt.hash(password, env.BCRYPT_SALT_ROUNDS);
 
@@ -114,7 +116,7 @@ const registerController = async (
   // remove this token from the response and require the user to verify first.
   res.status(201).json({
     success: true,
-    message: "User registered successfully",
+    message: successMessage,
     data: {
       token,
       user: {
@@ -125,6 +127,23 @@ const registerController = async (
       },
     },
   });
+};
+
+const registerController = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  // Role is never trusted from the client on self-registration.
+  // Standard registration always assigns "incoming".
+  await registerUserWithRole(req, res, "incoming", "User registered successfully");
+};
+
+const registerAsLeaderController = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  // Server-enforced role assignment to "leader" regardless of any client-supplied role field.
+  await registerUserWithRole(req, res, "leader", "Leader registered successfully");
 };
 
 const loginController = async (req: Request, res: Response): Promise<void> => {
@@ -255,6 +274,7 @@ const resetPasswordController = async (
 
 export {
   registerController,
+  registerAsLeaderController,
   loginController,
   getmeController,
   forgotPasswordController,

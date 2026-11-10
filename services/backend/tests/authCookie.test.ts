@@ -7,6 +7,7 @@ import {
   AUTH_COOKIE_NAME,
   loginController,
   parseExpiresInToMs,
+  registerAsLeaderController,
   registerController,
 } from "../src/controllers/auth.controller.js";
 import { authenticateToken } from "../src/middlewares/authMiddleware.js";
@@ -98,6 +99,44 @@ describe("Auth Cookies & JWT Issuance", () => {
     assert.equal(decoded.userId, fakeUser._id);
     assert.equal(decoded.email, fakeUser.email);
     assert.equal(decoded.role, fakeUser.role);
+  });
+
+  it("registerAsLeaderController creates user with 'leader' role and issues leader JWT cookie", async () => {
+    let capturedRole: string | undefined;
+    const fakeLeader = {
+      _id: "672f8b9c1a2b3c4d5e6f7a8e",
+      name: "Leader User",
+      email: "leader.reg@example.com",
+      role: "leader" as const,
+    };
+
+    mock.method(User, "create", async (doc: any) => {
+      capturedRole = doc.role;
+      return fakeLeader as any;
+    });
+
+    const req = {
+      body: {
+        name: "Leader User",
+        email: "Leader.Reg@Example.com",
+        password: "Password1!",
+      },
+    } as Request;
+    const res = mockResponse();
+
+    await registerAsLeaderController(req, res as Response);
+
+    assert.equal(capturedRole, "leader");
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.jsonBody?.success, true);
+    assert.equal(res.jsonBody?.data?.user?.role, "leader");
+    assert.equal(res.cookies.length, 1);
+
+    const cookie = res.cookies[0]!;
+    const decoded = jwt.verify(cookie.value, env.JWT_SECRET) as JWTPayload;
+    assert.equal(decoded.userId, fakeLeader._id);
+    assert.equal(decoded.email, fakeLeader.email);
+    assert.equal(decoded.role, "leader");
   });
 
   it("loginController sets an HttpOnly JWT cookie and returns token in response body", async () => {
