@@ -1,5 +1,11 @@
 import mongoose, { Document, Schema, Types } from "mongoose";
 
+export type GapCategory =
+  | "missing_owner"
+  | "missing_rationale"
+  | "unknown_claim"
+  | "conflicting_sources";
+
 export interface IGapQuestion extends Document {
   projectId: Types.ObjectId;
   relatedFindingId?: Types.ObjectId;
@@ -9,6 +15,7 @@ export interface IGapQuestion extends Document {
   answeredBy?: Types.ObjectId | null;
   answeredAt?: Date | null;
   evidence_badge: string;
+  gap_category?: GapCategory | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -50,6 +57,16 @@ const GapQuestionSchema = new Schema<IGapQuestion>(
     evidence_badge: {
       type: String,
       default: "Self-reported",
+    },
+    gap_category: {
+      type: String,
+      enum: [
+        "missing_owner",
+        "missing_rationale",
+        "unknown_claim",
+        "conflicting_sources",
+      ],
+      default: null,
     },
   },
   {

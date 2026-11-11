@@ -1,186 +1,205 @@
-// Findings API for the review screen.
-// Uses synthetic mock data until the backend is ready. When it is, set USE_MOCK to
-// false and agree the response shapes below with the backend team.
-//
-// Source:  { id, type, title, createdAt, updatedAt, importedAt }
-// Finding: { id, category, claim, status, evidence: [{ sourceId, excerpt }],
-//            recheck, recheckReason, review, edited }
-//   status: "supported" | "needs_review" | "conflicting" | "unknown"
-//   review: "pending" | "approved" | "rejected"
+import { client } from "./client.js";
 
-const USE_MOCK = true;
-const BASE_URL = "http://localhost:5000/api";
-
-const mockSources = [
-  {
-    id: "SRC-DOC-003",
-    type: "Meeting notes",
-    title: "Team meeting, 2 Mar",
-    createdAt: "2026-03-02T10:00:00Z",
-    updatedAt: "2026-03-02T10:00:00Z",
-    importedAt: "2026-11-09T08:30:00Z",
-  },
-  {
-    id: "SRC-DOC-005",
-    type: "Meeting notes",
-    title: "Team meeting, 16 Mar",
-    createdAt: "2026-03-16T10:00:00Z",
-    updatedAt: "2026-03-16T10:00:00Z",
-    importedAt: "2026-11-09T08:30:00Z",
-  },
-  {
-    id: "SRC-GH-014",
-    type: "GitHub pull request",
-    title: "PR #12: Add token validation middleware",
-    createdAt: "2026-03-20T14:12:00Z",
-    updatedAt: "2026-03-22T09:40:00Z",
-    importedAt: "2026-11-09T08:31:00Z",
-  },
-  {
-    id: "SRC-GH-021",
-    type: "GitHub issue",
-    title: "Issue #18: Payment webhook fails on retry",
-    createdAt: "2026-03-25T16:05:00Z",
-    updatedAt: "2026-03-26T11:20:00Z",
-    importedAt: "2026-11-09T08:31:00Z",
-  },
-  {
-    id: "SRC-CSV-002",
-    type: "Task board export",
-    title: "Task board, 30 Mar",
-    createdAt: "2026-03-30T18:00:00Z",
-    updatedAt: "2026-03-30T18:00:00Z",
-    importedAt: "2026-11-09T08:32:00Z",
-  },
-];
-
-const mockFindings = [
-  {
-    id: "F-001",
-    category: "Decision",
-    claim: "MongoDB was chosen as the project database for flexible document storage.",
-    status: "supported",
-    evidence: [
-      {
-        sourceId: "SRC-DOC-003",
-        excerpt: "We agreed to use MongoDB because the event data has no fixed schema.",
-      },
-    ],
-    recheck: false,
-    recheckReason: "",
-    review: "pending",
-    edited: false,
-  },
-  {
-    id: "F-002",
-    category: "Task status",
-    claim: "The authentication API is implemented and merged.",
-    status: "supported",
-    evidence: [
-      {
-        sourceId: "SRC-GH-014",
-        excerpt: "Adds JWT validation middleware for all /api routes. Merged into main.",
-      },
-    ],
-    recheck: false,
-    recheckReason: "",
-    review: "pending",
-    edited: false,
-  },
-  {
-    id: "F-003",
-    category: "Blocker",
-    claim: "The payment integration is incomplete.",
-    status: "needs_review",
-    evidence: [
-      {
-        sourceId: "SRC-DOC-005",
-        excerpt: "Payments are still pending. Someone needs to check the gateway docs.",
-      },
-    ],
-    recheck: false,
-    recheckReason: "",
-    review: "pending",
-    edited: false,
-  },
-  {
-    id: "F-004",
-    category: "Task status",
-    claim: "The database migration is complete.",
-    status: "conflicting",
-    evidence: [
-      {
-        sourceId: "SRC-DOC-005",
-        excerpt: "Migration done on staging.",
-      },
-      {
-        sourceId: "SRC-CSV-002",
-        excerpt: "Migrate event collection | Status: In progress",
-      },
-    ],
-    recheck: false,
-    recheckReason: "",
-    review: "pending",
-    edited: false,
-  },
-  {
-    id: "F-005",
-    category: "Known problem",
-    claim: "Issue #18, the payment webhook failing on retry, is still open.",
-    status: "supported",
-    evidence: [
-      {
-        sourceId: "SRC-GH-021",
-        excerpt: "Webhook handler returns 500 when the gateway retries a delivery.",
-      },
-    ],
-    recheck: true,
-    recheckReason:
-      "This evidence is older than recent code activity that may relate to the issue.",
-    review: "pending",
-    edited: false,
-  },
-  {
-    id: "F-006",
-    category: "Ownership",
-    claim: "No source names an owner for the notification service.",
-    status: "unknown",
-    evidence: [],
-    recheck: false,
-    recheckReason: "",
-    review: "pending",
-    edited: false,
-  },
-];
-
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function request(path) {
-  const response = await fetch(`${BASE_URL}${path}`);
-  if (!response.ok) throw new Error(`Request failed: ${response.status}`);
-  return response.json();
+/**
+ * Normalizes backend verification status to frontend status keys:
+ * "Supported" -> "supported"
+ * "Needs review" -> "needs_review"
+ * "Conflicting" -> "conflicting"
+ * "Unknown" -> "unknown"
+ */
+export function normalizeStatus(status) {
+  if (!status) return "unknown";
+  const s = String(status).toLowerCase().trim().replace(/[\s-]+/g, "_");
+  if (s === "needs_review" || s === "needsreview") return "needs_review";
+  if (s === "supported") return "supported";
+  if (s === "conflicting") return "conflicting";
+  return "unknown";
 }
 
 /**
- * Return findings for review. Demo mode returns a fresh copy of the sample data.
- * Backend request and response parsing errors propagate to the caller.
+ * Normalizes a raw MongoDB Finding document for frontend presentation.
  */
-export async function getFindings() {
-  if (USE_MOCK) {
-    await delay(300);
-    return structuredClone(mockFindings);
+export function normalizeFinding(raw) {
+  if (!raw) return null;
+  const id = raw._id || raw.id || "";
+  const status = normalizeStatus(raw.verification_status || raw.status);
+  const review = raw.review_status || raw.review || "pending";
+
+  let evidence = [];
+  if (Array.isArray(raw.evidence) && raw.evidence.length > 0) {
+    evidence = raw.evidence.map((e) => ({
+      sourceId: e.sourceId || e.source_id || raw.source_id || "",
+      excerpt: e.excerpt || e.verbatim_excerpt || "",
+    }));
+  } else if (raw.source_id || raw.verbatim_excerpt) {
+    evidence = [
+      {
+        sourceId: raw.source_id || "",
+        excerpt: raw.verbatim_excerpt || "",
+      },
+    ];
   }
-  return request("/findings");
+
+  return {
+    id,
+    _id: id,
+    category: raw.category || "General",
+    claim: raw.claim || "",
+    status,
+    rawStatus: raw.verification_status || raw.status,
+    evidence,
+    evidence_origin: raw.evidence_origin || "system",
+    evidence_badge: raw.evidence_badge || (raw.evidence_origin === "self_reported" ? "Self-reported" : ""),
+    recheck: Boolean(raw.needs_recheck || raw.recheck),
+    recheckReason: raw.recheck_reason || raw.recheckReason || "",
+    review,
+    edited: Boolean(raw.edited),
+    owner: raw.owner || null,
+    deadline: raw.deadline || null,
+    rationale: raw.rationale || null,
+    createdAt: raw.createdAt || raw.created_at,
+    updatedAt: raw.updatedAt || raw.updated_at,
+  };
 }
 
 /**
- * Return sources referenced by findings. Demo mode returns a fresh copy of the
- * sample data. Backend request and response parsing errors propagate to the caller.
+ * Normalizes a raw SourceRecord document.
  */
-export async function getSources() {
-  if (USE_MOCK) {
-    await delay(300);
-    return structuredClone(mockSources);
+export function normalizeSource(raw) {
+  if (!raw) return null;
+  const id = raw.source_id || raw.id || raw._id || "";
+  return {
+    id,
+    source_id: id,
+    type: raw.source_type ? `${raw.source_type.toUpperCase()}` : "Document",
+    title: raw.metadata?.title || raw.metadata?.url || id,
+    author: raw.metadata?.author || "Unknown",
+    createdAt: raw.created_at || raw.createdAt,
+    updatedAt: raw.updated_at || raw.updatedAt,
+    importedAt: raw.imported_at || raw.importedAt,
+    redactedContent: raw.redacted_content,
+    metadata: raw.metadata || {},
+  };
+}
+
+/**
+ * Fetch candidate findings for a project.
+ */
+export async function getFindings(projectId) {
+  if (!projectId) {
+    return [];
   }
-  return request("/sources");
+
+  const result = await client.get(`/projects/${encodeURIComponent(projectId)}/findings`);
+  const rawList = Array.isArray(result.data) ? result.data : result.findings || [];
+  return rawList.map(normalizeFinding);
+}
+
+/**
+ * Fetch sources ingested for a project.
+ * Optional type filter: "github", "document", "task".
+ */
+export async function getSources(projectId, type = null) {
+  if (!projectId) {
+    return [];
+  }
+
+  const params = type && type !== "all" ? { type } : undefined;
+  const result = await client.get(`/projects/${encodeURIComponent(projectId)}/sources`, {
+    params,
+  });
+  const rawList = Array.isArray(result.data) ? result.data : result.sources || [];
+  return rawList.map(normalizeSource);
+}
+
+/**
+ * Fetch a single source record including full redacted_content.
+ */
+export async function getSourceById(projectId, sourceId) {
+  if (!projectId || !sourceId) {
+    throw new Error("Project ID and Source ID are required.");
+  }
+
+  const result = await client.get(
+    `/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(sourceId)}`
+  );
+  return result.data ? normalizeSource(result.data) : null;
+}
+
+/**
+ * Approve a finding.
+ */
+export async function approveFinding(projectId, findingId) {
+  if (!projectId || !findingId) {
+    throw new Error("Project ID and Finding ID are required to approve a finding.");
+  }
+
+  const result = await client.post(
+    `/projects/${encodeURIComponent(projectId)}/findings/${encodeURIComponent(findingId)}/approve`
+  );
+  return normalizeFinding(result.data);
+}
+
+/**
+ * Reject a finding.
+ */
+export async function rejectFinding(projectId, findingId) {
+  if (!projectId || !findingId) {
+    throw new Error("Project ID and Finding ID are required to reject a finding.");
+  }
+
+  const result = await client.post(
+    `/projects/${encodeURIComponent(projectId)}/findings/${encodeURIComponent(findingId)}/reject`
+  );
+  return normalizeFinding(result.data);
+}
+
+/**
+ * Edit finding properties (claim, category, owner, deadline, rationale, review_status, reverify).
+ * Supports both editFinding(projectId, findingId, claimString, reverifyBool)
+ * and editFinding(projectId, findingId, { claim, category, ... })
+ */
+export async function editFinding(projectId, findingId, dataOrClaim, reverify = false) {
+  if (!projectId || !findingId) {
+    throw new Error("Project ID and Finding ID are required to edit a finding.");
+  }
+
+  const payload =
+    typeof dataOrClaim === "object" && dataOrClaim !== null
+      ? dataOrClaim
+      : { claim: dataOrClaim, reverify };
+
+  const result = await client.patch(
+    `/projects/${encodeURIComponent(projectId)}/findings/${encodeURIComponent(findingId)}`,
+    payload
+  );
+  return normalizeFinding(result.data);
+}
+
+/**
+ * Re-verify a candidate finding against source records via AI Engine.
+ */
+export async function reverifyFinding(projectId, findingId) {
+  if (!projectId || !findingId) {
+    throw new Error("Project ID and Finding ID are required to re-verify a finding.");
+  }
+
+  const result = await client.post(
+    `/projects/${encodeURIComponent(projectId)}/findings/${encodeURIComponent(findingId)}/verify`
+  );
+  return normalizeFinding(result.data);
+}
+
+/**
+ * Trigger freshness scan on findings.
+ */
+export async function scanFreshness(projectId, options = {}) {
+  if (!projectId) {
+    throw new Error("Project ID is required.");
+  }
+
+  return client.post(
+    `/projects/${encodeURIComponent(projectId)}/findings/freshness-scan`,
+    options
+  );
 }

@@ -1,27 +1,25 @@
-
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   GitBranch,
   FileText,
   ExternalLink,
-  Trash2,
   FolderOpen,
   X,
   ShieldCheck,
   Eye,
   Table,
+  Upload,
+  RefreshCw,
 } from "lucide-react";
 
-import {
-  getSavedSources,
-  removeSavedSource,
-} from "@/services/sourceStorage";
+import { client } from "@/api/client";
+import { getSources } from "@/api/findingsApi";
 
 /**
- * Parse CSV preview text into rows of cells, retaining quoted commas and line
- * breaks and decoding doubled quotes. Rows containing only blank cells are omitted.
+ * Parse CSV preview text into rows of cells.
  */
 function parseCSV(content) {
+  if (!content) return [];
   const rows = [];
   let row = [];
   let cell = "";
@@ -41,13 +39,10 @@ function parseCSV(content) {
       cell = "";
     } else if ((char === "\n" || char === "\r") && !insideQuotes) {
       if (char === "\r" && next === "\n") i++;
-
       row.push(cell);
-
       if (row.some((value) => value.trim() !== "")) {
         rows.push(row);
       }
-
       row = [];
       cell = "";
     } else {
@@ -56,59 +51,76 @@ function parseCSV(content) {
   }
 
   row.push(cell);
-
   if (row.some((value) => value.trim() !== "")) {
     rows.push(row);
   }
-
   return rows;
 }
 
-export default function SourceManagement() {
-  const [sources, setSources] = useState(() => getSavedSources());
-const [selectedSource, setSelectedSource] = useState(null);
+export default function SourceManagement({ projectId = "", onUploadSources = null }) {
+  const [sources, setSources] = useState([]);
+  const [filterType, setFilterType] = useState("all");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [selectedSource, setSelectedSource] = useState(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
 
-  function handleRemove(id) {
-    const confirmed = window.confirm(
-      "Are you sure you want to remove this source from the demo list?"
-    );
+  async function loadSources() {
+    if (!projectId) {
+      setSources([]);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const data = await getSources(projectId, filterType);
+      setSources(data);
+    } catch (err) {
+      console.error("Failed to load sources:", err);
+      setError(err.message || "Could not load project sources.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
-    if (!confirmed) return;
+  useEffect(() => {
+    loadSources();
+  }, [projectId, filterType]);
 
-    setSources(removeSavedSource(id));
-    setSelectedSource(null);
+  async function handleInspectSource(src) {
+    if (!projectId || !src?.id) return;
+    setDetailsLoading(true);
+    try {
+      const result = await client.get(
+        `/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(src.id)}`
+      );
+      setSelectedSource(result.data || src);
+    } catch {
+      // Fallback to basic source metadata if detailed endpoint fails
+      setSelectedSource(src);
+    } finally {
+      setDetailsLoading(false);
+    }
   }
 
   function formatDate(date) {
+    if (!date) return "Not available";
     return new Date(date).toLocaleDateString("en-IN", {
       day: "numeric",
-      month: "long",
+      month: "short",
       year: "numeric",
     });
   }
 
-  function formatSize(bytes) {
-    if (bytes == null) return "Not available";
-
-    if (bytes < 1024 * 1024) {
-      return `${(bytes / 1024).toFixed(1)} KB`;
-    }
-
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  function getBadgeClass(type) {
+    const t = (type || "").toLowerCase();
+    if (t.includes("git")) return "bg-[#EAF5EF] text-[#0A6C3B] border-[#CCEAD9]";
+    if (t.includes("task") || t.includes("csv")) return "bg-[#F3EFFB] text-[#5B32A3] border-[#DFD5F5]";
+    return "bg-[#EBF3FB] text-[#1E5D88] border-[#CCE2F4]";
   }
 
-  function isRepository(source) {
-    return source.type === "GitHub Repository";
-  }
-
-  function canPreview(source) {
-    return ["CSV", "TXT"].includes(source.type);
-  }
-
-  const csvRows =
-    selectedSource?.type === "CSV"
-      ? parseCSV(selectedSource.previewContent || "")
-      : [];
+  const isCsv = (selectedSource?.source_type === "task" || selectedSource?.type?.includes("CSV"));
+  const csvRows = isCsv ? parseCSV(selectedSource?.redacted_content || "") : [];
 
   return (
     <>
@@ -118,327 +130,235 @@ const [selectedSource, setSelectedSource] = useState(null);
             <div className="flex items-center gap-2">
               <FolderOpen size={20} className="text-[#159B59]" />
               <h2 className="text-xl font-bold text-[#001E2B]">
-                Source Management
+                Project Sources & Evidence Slips
               </h2>
             </div>
-
             <p className="mt-1 text-sm text-[#71817B]">
-              Manage connected repositories and uploaded project documents.
+              Canonical ingested records scanned deterministically for secrets and PII.
             </p>
           </div>
 
-          <span className="rounded-full bg-[#E8F8EF] px-3 py-1 text-xs font-semibold text-[#087A3D]">
-            {sources.length} source{sources.length !== 1 ? "s" : ""}
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex rounded-lg border border-[#DCE9E3] bg-[#F7FAF8] p-1 text-xs font-semibold">
+              {["all", "github", "document", "task"].map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setFilterType(t)}
+                  className={`rounded-md px-2.5 py-1 capitalize ${
+                    filterType === t
+                      ? "bg-white text-[#001E2B] shadow-sm"
+                      : "text-[#64756F] hover:text-[#001E2B]"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={loadSources}
+              disabled={loading}
+              className="flex items-center gap-1.5 rounded-lg border border-[#DCE9E3] px-3 py-1.5 text-xs font-semibold text-[#001E2B] hover:bg-[#F5F9F6] disabled:opacity-50"
+            >
+              <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
+              Refresh
+            </button>
+
+            {onUploadSources && (
+              <button
+                type="button"
+                onClick={onUploadSources}
+                className="flex items-center gap-1.5 rounded-lg bg-[#001E2B] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#023D35]"
+              >
+                <Upload size={13} />
+                Connect / Upload
+              </button>
+            )}
+          </div>
         </div>
 
-        {sources.length === 0 ? (
-          <div className="mt-6 rounded-xl border border-dashed border-[#CDE9D8] bg-[#F7FAF8] px-5 py-10 text-center">
-            <FolderOpen size={32} className="mx-auto text-[#159B59]" />
-
-            <h3 className="mt-3 font-semibold text-[#001E2B]">
-              No project sources added yet
-            </h3>
-
-            <p className="mt-1 text-sm text-[#71817B]">
-              Connect a GitHub repository or upload meeting notes to see them here.
-            </p>
-          </div>
-        ) : (
-          <div className="mt-6 space-y-3">
-            {sources.map((source) => {
-              const repository = isRepository(source);
-
-              return (
-                <div
-                  key={source.id}
-                  className="flex flex-wrap items-center gap-3 rounded-xl border border-[#E4EDE7] p-4 transition hover:border-[#BBD9C7] hover:bg-[#FAFCFA]"
-                >
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#E8F8EF] text-[#087A3D]">
-                    {repository ? (
-                      <GitBranch size={21} />
-                    ) : (
-                      <FileText size={21} />
-                    )}
-                  </div>
-
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-[#001E2B]">
-                      {source.name}
-                    </p>
-
-                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#71817B]">
-                      <span>{source.category || source.type}</span>
-
-                      {!repository && (
-                        <span>{formatSize(source.size)}</span>
-                      )}
-
-                      <span>{formatDate(source.createdAt)}</span>
-                    </div>
-
-                    <span className="mt-2 inline-flex rounded-full bg-[#E8F8EF] px-2.5 py-1 text-xs font-medium text-[#087A3D]">
-                      {source.status}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedSource(source)}
-                      title="View source details"
-                      aria-label={`View details of ${source.name}`}
-                      className="rounded-lg p-2 text-[#64756F] transition hover:bg-[#E8F8EF] hover:text-[#087A3D]"
-                    >
-                      <Eye size={17} />
-                    </button>
-
-                    {repository && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          window.open(
-                            source.url,
-                            "_blank",
-                            "noopener,noreferrer"
-                          )
-                        }
-                        title="Open GitHub repository"
-                        aria-label="Open GitHub repository"
-                        className="rounded-lg p-2 text-[#64756F] transition hover:bg-[#E8F8EF] hover:text-[#087A3D]"
-                      >
-                        <ExternalLink size={17} />
-                      </button>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => handleRemove(source.id)}
-                      title="Remove source"
-                      aria-label={`Remove ${source.name}`}
-                      className="rounded-lg p-2 text-[#64756F] transition hover:bg-red-50 hover:text-red-600"
-                    >
-                      <Trash2 size={17} />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+        {error && (
+          <div className="mt-4 rounded-lg bg-red-50 p-3 text-xs text-red-700">
+            {error}
           </div>
         )}
 
-        <p className="mt-4 text-xs text-[#84918B]">
-          Demo records are saved in this browser only. Actual server storage is
-          pending backend integration.
-        </p>
+        {loading ? (
+          <div className="py-12 text-center text-sm text-[#71817B]">
+            Loading project sources...
+          </div>
+        ) : sources.length === 0 ? (
+          <div className="mt-5 rounded-xl border border-dashed border-[#DCE9E3] bg-[#FAFCFA] py-10 text-center">
+            <FolderOpen size={32} className="mx-auto text-[#A0ACA6]" />
+            <p className="mt-2 text-sm font-semibold text-[#001E2B]">
+              No sources imported yet.
+            </p>
+            <p className="mt-1 text-xs text-[#71817B]">
+              Connect a GitHub repository, upload meeting notes (PDF/DOCX), or task trackers (CSV).
+            </p>
+            {onUploadSources && (
+              <button
+                type="button"
+                onClick={onUploadSources}
+                className="mt-4 rounded-lg bg-[#159B59] px-4 py-2 text-xs font-semibold text-white hover:bg-[#12834A]"
+              >
+                Upload First Source
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="mt-5 overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-[#E8F0EC] bg-[#FAFCFA] text-xs font-semibold uppercase text-[#71817B]">
+                <tr>
+                  <th className="px-4 py-3">Canonical ID</th>
+                  <th className="px-4 py-3">Source Name / Target</th>
+                  <th className="px-4 py-3">Origin Type</th>
+                  <th className="px-4 py-3">Imported Date</th>
+                  <th className="px-4 py-3">Redactions</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#F0F4F2]">
+                {sources.map((src) => (
+                  <tr key={src.id} className="hover:bg-[#F9FCFA]">
+                    <td className="px-4 py-3 font-mono text-xs font-bold text-[#001E2B]">
+                      {src.id}
+                    </td>
+                    <td className="px-4 py-3 font-medium text-[#001E2B]">
+                      <div className="max-w-xs truncate" title={src.title}>
+                        {src.title}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-block rounded-full border px-2 py-0.5 text-[11px] font-semibold ${getBadgeClass(
+                          src.type
+                        )}`}
+                      >
+                        {src.type}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-[#71817B]">
+                      {formatDate(src.importedAt || src.createdAt)}
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      {src.metadata?.redactionCount != null && src.metadata.redactionCount > 0 ? (
+                        <span className="font-semibold text-amber-700">
+                          {src.metadata.redactionCount} masked
+                        </span>
+                      ) : (
+                        <span className="text-[#8E9B95]">Clean</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => handleInspectSource(src)}
+                        className="inline-flex items-center gap-1 rounded border border-[#DCE9E3] bg-white px-2.5 py-1 text-xs font-semibold text-[#001E2B] hover:bg-[#F0F8F4]"
+                      >
+                        <Eye size={12} />
+                        Inspect Slip
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
+      {/* Source Preview & Redacted Content Modal */}
       {selectedSource && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[#001E2B]/50 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           onClick={() => setSelectedSource(null)}
         >
           <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="source-detail-title"
-            className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-[#DCE9E3] bg-white shadow-2xl"
-            onClick={(event) => event.stopPropagation()}
+            className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between border-b border-[#E5EEE9] p-6">
-              <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#E8F8EF] text-[#087A3D]">
-                  {isRepository(selectedSource) ? (
-                    <GitBranch size={24} />
-                  ) : (
-                    <FileText size={24} />
-                  )}
-                </div>
-
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-[#159B59]">
-                    Source Details
-                  </p>
-
-                  <h2
-                    id="source-detail-title"
-                    className="mt-1 text-lg font-bold text-[#001E2B]"
-                  >
-                    {selectedSource.name}
-                  </h2>
-                </div>
+            <div className="flex items-center justify-between border-b border-[#E8F0EC] p-5">
+              <div>
+                <h3 className="font-mono text-base font-bold text-[#001E2B]">
+                  {selectedSource.source_id || selectedSource.id}
+                </h3>
+                <p className="mt-0.5 text-xs text-[#71817B]">
+                  {selectedSource.title || selectedSource.metadata?.title || "Source Record"}
+                </p>
               </div>
 
               <button
                 type="button"
                 onClick={() => setSelectedSource(null)}
-                aria-label="Close details"
-                className="rounded-lg p-2 text-[#64756F] transition hover:bg-[#F0F5F2] hover:text-[#001E2B]"
+                className="rounded-lg p-1.5 text-[#8E9B95] hover:bg-[#F0F4F2] hover:text-[#001E2B]"
               >
-                <X size={20} />
+                <X size={18} />
               </button>
             </div>
 
-            <div className="space-y-5 p-6">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-[#84918B]">
-                  Source Name
-                </p>
-                <p className="mt-1 break-all text-sm font-semibold text-[#001E2B]">
-                  {selectedSource.name}
-                </p>
-              </div>
-
-              {isRepository(selectedSource) ? (
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-[#84918B]">
-                    Repository URL
-                  </p>
-
-                  <a
-                    href={selectedSource.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-1 flex items-center gap-2 break-all text-sm font-medium text-[#087A3D] hover:underline"
-                  >
-                    {selectedSource.url}
-                    <ExternalLink size={14} />
-                  </a>
-                </div>
-              ) : (
-                <>
-                  <div className="flex flex-wrap gap-6">
-                    <div>
-                      <p className="text-xs text-[#84918B]">File Type</p>
-                      <p className="text-sm font-semibold text-[#001E2B]">
-                        {selectedSource.type}
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs text-[#84918B]">File Size</p>
-                      <p className="text-sm font-semibold text-[#001E2B]">
-                        {formatSize(selectedSource.size)}
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs text-[#84918B]">Date Added</p>
-                      <p className="text-sm font-semibold text-[#001E2B]">
-                        {formatDate(selectedSource.createdAt)}
-                      </p>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[#84918B]">
-                  Source Status
-                </p>
-
-                <span className="inline-flex rounded-full bg-[#E8F8EF] px-3 py-1 text-xs font-semibold text-[#087A3D]">
-                  <ShieldCheck size={14} className="mr-1" />
-                  {selectedSource.status}
+            <div className="flex-1 overflow-y-auto p-5">
+              <div className="mb-4 flex items-center gap-2 rounded-lg bg-[#EAF8EF] p-3 text-xs text-[#0A6C3B]">
+                <ShieldCheck size={16} className="shrink-0" />
+                <span>
+                  Deterministic Pre-AI Secret & PII scanner masked sensitive tokens with{" "}
+                  <code>[REDACTED_SECRET]</code> and <code>[REDACTED_PII]</code>.
                 </span>
               </div>
 
-              {/* CSV Preview */}
-              {selectedSource.type === "CSV" && (
-                <div>
-                  <div className="mb-3 flex items-center gap-2">
-                    <Table size={18} className="text-[#159B59]" />
-                    <h3 className="font-semibold text-[#001E2B]">
-                      CSV Preview
-                    </h3>
-                  </div>
-
-                  {selectedSource.previewContent ? (
-                    <div className="max-h-72 overflow-auto rounded-xl border border-[#DCE9E3]">
-                      <table className="min-w-full text-left text-xs">
-                        <tbody>
-                          {csvRows.map((row, rowIndex) => (
-                            <tr
-                              key={rowIndex}
-                              className={
-                                rowIndex === 0
-                                  ? "bg-[#E8F8EF] font-bold text-[#001E2B]"
-                                  : "border-t border-[#E5EEE9] text-[#64756F]"
-                              }
-                            >
-                              {row.map((cell, cellIndex) => (
-                                <td
-                                  key={cellIndex}
-                                  className="whitespace-nowrap px-3 py-2"
-                                >
-                                  {cell}
-                                </td>
-                              ))}
-                            </tr>
+              {detailsLoading ? (
+                <div className="py-8 text-center text-sm text-[#71817B]">
+                  Loading verbatim excerpt...
+                </div>
+              ) : isCsv && csvRows.length > 0 ? (
+                <div className="overflow-x-auto rounded-lg border border-[#E8F0EC]">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[#FAFCFA] font-semibold text-[#71817B]">
+                      <tr>
+                        {csvRows[0].map((cell, idx) => (
+                          <th key={idx} className="border-b px-3 py-2">
+                            {cell}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {csvRows.slice(1, 15).map((row, rIdx) => (
+                        <tr key={rIdx} className="border-b hover:bg-[#FAFCFA]">
+                          {row.map((cell, cIdx) => (
+                            <td key={cIdx} className="px-3 py-1.5">
+                              {cell}
+                            </td>
                           ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <p className="rounded-xl bg-[#F7FAF8] p-4 text-sm text-[#64756F]">
-                      No CSV preview is available. Upload this file again to
-                      generate its preview.
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {csvRows.length > 15 && (
+                    <p className="p-2 text-center text-xs text-[#8E9B95]">
+                      Showing first 15 of {csvRows.length - 1} rows
                     </p>
                   )}
                 </div>
+              ) : (
+                <pre className="max-h-96 overflow-y-auto rounded-lg border border-[#E8F0EC] bg-[#FAFCFA] p-4 text-xs font-mono leading-5 text-[#001E2B] whitespace-pre-wrap">
+                  {selectedSource.redacted_content ||
+                    selectedSource.redactedContent ||
+                    "No redacted content available for this source record."}
+                </pre>
               )}
-
-              {/* TXT Preview */}
-              {selectedSource.type === "TXT" && (
-                <div>
-                  <div className="mb-3 flex items-center gap-2">
-                    <FileText size={18} className="text-[#159B59]" />
-                    <h3 className="font-semibold text-[#001E2B]">
-                      Text Preview
-                    </h3>
-                  </div>
-
-                  {selectedSource.previewContent ? (
-                    <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-[#DCE9E3] bg-[#F7FAF8] p-4 text-xs leading-6 text-[#42534B]">
-                      {selectedSource.previewContent}
-                    </pre>
-                  ) : (
-                    <p className="rounded-xl bg-[#F7FAF8] p-4 text-sm text-[#64756F]">
-                      No text preview is available. Upload this file again to
-                      generate its preview.
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {selectedSource.previewTruncated && (
-                <p className="text-xs text-[#8A6500]">
-                  Preview limited to the first 50,000 characters.
-                </p>
-              )}
-
-              {!canPreview(selectedSource) && !isRepository(selectedSource) && (
-                <p className="rounded-xl bg-[#F7FAF8] p-4 text-sm text-[#64756F]">
-                  Preview is currently available for CSV and TXT files only.
-                </p>
-              )}
-
-              <div className="rounded-xl border border-[#DCE9E3] bg-[#F7FAF8] p-4">
-                <p className="text-xs leading-5 text-[#64756F]">
-                  This is a locally saved demo preview. Actual server-side
-                  storage and document processing are pending backend
-                  integration.
-                </p>
-              </div>
             </div>
 
-            <div className="flex justify-end border-t border-[#E5EEE9] p-5">
+            <div className="flex justify-end border-t border-[#E8F0EC] p-4">
               <button
                 type="button"
                 onClick={() => setSelectedSource(null)}
-                className="rounded-xl bg-[#001E2B] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#023D35]"
+                className="rounded-lg bg-[#001E2B] px-4 py-2 text-xs font-semibold text-white hover:bg-[#023D35]"
               >
-                Close
+                Close Slip
               </button>
             </div>
           </div>

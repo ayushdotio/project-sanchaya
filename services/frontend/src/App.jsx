@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import TeamMemberDashboard from "./pages/TeamMemberDashboard";
 import Landing from "./pages/Landing";
@@ -15,7 +15,7 @@ import SourceUpload from "./pages/SourceUpload";
 import Nav from "./components/Nav";
 import Guide from "./components/Guide";
 
-import { ROLE_LABEL } from "./api/authApi";
+import { ROLE_LABEL, getCurrentUser, logout } from "./api/authApi";
 
 const STEPS = {
   leader: [
@@ -241,8 +241,36 @@ export default function App() {
   const [activePage, setActivePage] = useState("dashboard");
   const [selectedProjectId, setSelectedProjectId] = useState("");
 
+  // Restore authenticated session and project context on browser refresh (WR-04)
+  useEffect(() => {
+    async function restoreSession() {
+      try {
+        const activeUser = await getCurrentUser();
+        if (activeUser) {
+          setUser(activeUser);
+          setStarted(true);
+          const savedProjectId = localStorage.getItem("sanchaya_last_project_id");
+          if (savedProjectId) {
+            setSelectedProjectId(savedProjectId);
+          }
+        }
+      } catch (err) {
+        console.warn("Could not restore session:", err);
+      }
+    }
+
+    restoreSession();
+  }, []);
+
   function handleNavigate(page, projectId) {
-    if (projectId) setSelectedProjectId(projectId);
+    if (projectId) {
+      setSelectedProjectId(projectId);
+      try {
+        localStorage.setItem("sanchaya_last_project_id", projectId);
+      } catch (err) {
+        console.warn("Could not persist active project ID:", err);
+      }
+    }
     setActivePage(page);
   }
 
@@ -261,7 +289,9 @@ export default function App() {
   }
 
   function signOut() {
+    logout();
     setUser(null);
+    setSelectedProjectId("");
     setActivePage("dashboard");
   }
 
@@ -359,32 +389,31 @@ export default function App() {
         )}
 
       {/* TEAM LEADER FINDINGS REVIEW */}
-      {user?.role === "leader" &&
-        activePage === "findings" &&
-        !shared && (
-          <FindingsReview
-            onContinue={(all) => {
-              const approvedFindings = all.filter(
-                (f) => f.review === "approved"
-              );
+      {user?.role === "leader" && activePage === "findings" && (
+        <FindingsReview
+          projectId={selectedProjectId}
+          onContinue={(all) => {
+            const approvedFindings = all.filter(
+              (f) => f.review === "approved"
+            );
 
-              const rejectedFindings = all.filter(
-                (f) => f.review === "rejected"
-              );
+            const rejectedFindings = all.filter(
+              (f) => f.review === "rejected"
+            );
 
-              setApproved(approvedFindings);
+            setApproved(approvedFindings);
 
-              setReviewSummary({
-                approved: approvedFindings.length,
-                rejected: rejectedFindings.length,
-                total: all.length,
-              });
+            setReviewSummary({
+              approved: approvedFindings.length,
+              rejected: rejectedFindings.length,
+              total: all.length,
+            });
 
-              setShared(true);
-              setActivePage("completion");
-            }}
-          />
-        )}
+            setShared(true);
+            setActivePage("completion");
+          }}
+        />
+      )}
 
       {/* ANIMATED HANDOVER COMPLETION */}
       {user?.role === "leader" &&
@@ -398,26 +427,32 @@ export default function App() {
         )}
 
       {/* OUTGOING MEMBER QUESTIONS */}
-      {user?.role === "outgoing" &&
-        activePage === "questions" && <ExitQuestions />}
+      {user?.role === "outgoing" && activePage === "questions" && (
+        <ExitQuestions
+          projectId={selectedProjectId}
+          onComplete={() => setActivePage("dashboard")}
+        />
+      )}
 
       {/* INCOMING MEMBER HANDOVER */}
-      {user?.role === "incoming" &&
-        activePage === "handover" && (
-          <MyHandover
-            approved={approved}
-            title="Your handover"
-          />
-        )}
+      {user?.role === "incoming" && activePage === "handover" && (
+        <MyHandover
+          projectId={selectedProjectId}
+          approved={approved}
+          title="Your Handover Report"
+          user={user}
+        />
+      )}
 
       {/* TEAM MEMBER HANDOVER */}
-      {user?.role === "member" &&
-        activePage === "handover" && (
-          <MyHandover
-            approved={approved}
-            title="Team handover"
-          />
-        )}
+      {user?.role === "member" && activePage === "handover" && (
+        <MyHandover
+          projectId={selectedProjectId}
+          approved={approved}
+          title="Team Handover Report"
+          user={user}
+        />
+      )}
 
       {/* SOURCE UPLOAD PAGE */}
       {user?.role === "leader" && activePage === "sources" && (

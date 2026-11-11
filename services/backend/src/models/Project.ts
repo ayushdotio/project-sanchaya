@@ -1,5 +1,9 @@
 import mongoose, { Document, Schema, Types } from "mongoose";
-import { IReadinessChecklist, ReadinessStatus } from "../types/source.types.js";
+import {
+  IReadinessChecklist,
+  ReadinessStatus,
+  SourceType,
+} from "../types/source.types.js";
 
 export interface IProject extends Document {
   name: string;
@@ -14,6 +18,9 @@ export interface IProject extends Document {
   readinessStatus: ReadinessStatus;
   approvedBy?: Types.ObjectId | null;
   approvedAt?: Date | null;
+  approvedSnapshotHash?: string | null;
+  plannedSourceTypes?: SourceType[];
+  recipientScope?: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -75,6 +82,19 @@ const ProjectSchema = new Schema<IProject>(
     approvedAt: {
       type: Date,
       default: null,
+    },
+    approvedSnapshotHash: {
+      type: String,
+      default: null,
+    },
+    plannedSourceTypes: {
+      type: [String],
+      enum: ["github", "document", "task"],
+      default: [],
+    },
+    recipientScope: {
+      type: [String],
+      default: ["project"],
     },
   },
   {

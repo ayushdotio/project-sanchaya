@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   authenticateToken,
+  requireProjectMembership,
   requireRoles,
 } from "../middlewares/authMiddleware.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
@@ -30,6 +31,7 @@ router.get(
   "/:projectId/handover",
   authenticateToken,
   requireRoles(["leader", "incoming"]),
+  requireProjectMembership,
   asyncHandler(handoverReportController),
 );
 
@@ -49,6 +51,7 @@ router.get(
   "/:projectId/handover/export-pdf",
   authenticateToken,
   requireRoles(["leader", "incoming"]),
+  requireProjectMembership,
   asyncHandler(exportPDFController),
 );
 
@@ -58,7 +61,7 @@ router.get(
  * @access : Protected (requires valid JWT via `authenticateToken` and `"incoming"` role via `requireRoles`; also requires `readinessStatus === "Approved for Sharing"` via `verifyHandoverAccess`)
  * @description : Stage 5 receipt endpoint allowing an incoming member to formally acknowledge handover.
  *   1. Calls `verifyHandoverAccess` to confirm the project exists (`404`) and is `"Approved for Sharing"` (`403` otherwise).
- *   2. Creates a `HandoverHistory` document recording `projectId`, `version: 1`, `approvedSnapshot`
+ *   2. Creates a `HandoverHistory` document recording `projectId`, `version`, `approvedSnapshot`
  *      (`projectName`, `approvedAt`, `readinessStatus`), `acknowledgedBy` (`req.user.userId`), and `acknowledgedAt`.
  *   3. Responds with `200 OK` containing `{ success: true, message: "Handover receipt successfully acknowledged.", data: receipt }`.
  */
@@ -66,6 +69,7 @@ router.post(
   "/:projectId/handover/acknowledge",
   authenticateToken,
   requireRoles(["incoming"]),
+  requireProjectMembership,
   asyncHandler(handoverAcknowledgementController),
 );
 
@@ -84,6 +88,7 @@ router.get(
   "/:projectId/handover/history",
   authenticateToken,
   requireRoles(["leader", "incoming"]),
+  requireProjectMembership,
   asyncHandler(handoverHistoryController),
 );
 

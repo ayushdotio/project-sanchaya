@@ -40,6 +40,7 @@ const envSchema = z.object({
   // Support both canonical and legacy environment variable names
   AI_SERVICE_URL: z.string().url().default("http://ai-engine:8001"),
   ANALYTICS_SERVICE_URL: z.string().url().default("http://analytics-service:8002"),
+  INTERNAL_API_TOKEN: z.string().optional(),
   VARAD_AI_SERVICE_URL: z.string().url().optional(),
   PRAKHAR_ANALYTICS_SERVICE_URL: z.string().url().optional(),
 });

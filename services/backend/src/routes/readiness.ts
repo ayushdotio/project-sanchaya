@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import {
   authenticateToken,
+  requireProjectMembership,
   requireRoles,
 } from "../middlewares/authMiddleware.js";
 import { validateBody } from "../middlewares/validate.js";
@@ -16,6 +17,7 @@ import {
 const router = Router();
 
 const signOffSchema = z.object({
+  evaluateWithAnalytics: z.boolean().optional(),
   checklistUpdates: z
     .object({
       sourcesVerified: z.boolean().optional(),
@@ -41,6 +43,7 @@ const signOffSchema = z.object({
 router.get(
   "/:projectId/readiness",
   authenticateToken,
+  requireProjectMembership,
   asyncHandler(readinessController),
 );
 
@@ -58,6 +61,7 @@ router.get(
   "/:projectId/risk-map",
   authenticateToken,
   requireRoles(["leader", "outgoing"]),
+  requireProjectMembership,
   asyncHandler(riskMapController),
 );
 
@@ -74,6 +78,7 @@ router.post(
   "/:projectId/readiness/evaluate",
   authenticateToken,
   requireRoles(["leader"]),
+  requireProjectMembership,
   asyncHandler(readinessEvaluateController),
 );
 
@@ -96,6 +101,7 @@ router.post(
   "/:projectId/readiness/sign-off",
   authenticateToken,
   requireRoles(["leader"]),
+  requireProjectMembership,
   validateBody(signOffSchema),
   asyncHandler(readinessSignOffController),
 );

@@ -1,140 +1,173 @@
-
-const BASE_URL = "http://localhost:5000/api";
+import { client, setToken, setUser, clearAuth, getUser, getToken } from "./client.js";
 
 export const ROLE_LABEL = {
-  leader: "Team leader",
-  outgoing: "Leaving the project",
-  incoming: "incoming member",
-  member: "Team member",
+  leader: "Team Leader",
+  outgoing: "Outgoing Member",
+  incoming: "Incoming Member",
+  member: "Team Member", // preserved for legacy UI fallback
 };
 
-// All four demo accounts preserved
 export const DEMO_ACCOUNTS = [
   {
     role: "leader",
-    name: "Demo team leader",
+    name: "Demo Team Leader",
     email: "leader@sanchaya.demo",
     password: "Leader@123",
   },
   {
     role: "outgoing",
-    name: "Demo leaving member",
+    name: "Demo Leaving Member",
     email: "leaving@sanchaya.demo",
     password: "Leaving@123",
   },
   {
     role: "incoming",
-    name: "Demo new member",
+    name: "Demo New Member",
     email: "incoming@sanchaya.demo",
     password: "Incoming@123",
   },
-  {
-    role: "member",
-    name: "Demo team member",
-    email: "member@sanchaya.demo",
-    password: "Member@123",
-  },
 ];
 
-const delay = (ms) =>
-  new Promise((resolve) => setTimeout(resolve, ms));
-
-async function apiRequest(endpoint, options = {}) {
-  const response = await fetch(`${BASE_URL}${endpoint}`, {
-    ...options,
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
-
-  const result = await response.json();
-
-  if (!response.ok) {
-    throw new Error(
-      result.error || result.message || "Something went wrong."
-    );
-  }
-
-  return result;
-}
-
 function normalizeUser(result) {
-  const user = result.data?.user;
+  const user = result.data?.user || result.user;
+  const token = result.data?.token || result.token;
 
   if (!user) {
-    throw new Error("Invalid response received from server.");
+    throw new Error("Invalid response received from authentication server.");
   }
 
-  return {
+  const normalized = {
     ...user,
-    token: result.data.token,
+    token,
   };
+
+  if (token) {
+    setToken(token);
+  }
+  setUser(normalized);
+
+  return normalized;
 }
 
-// Login: demo accounts first, then real backend
-// No workspace role selection required
+/**
+ * Log in an existing user.
+ * If credentials match a demo account and it does not exist yet on the backend,
+ * it auto-provisions the demo user via the respective registration endpoint.
+ */
 export async function login(email, password) {
   const cleanEmail = email.trim().toLowerCase();
 
-  // Check demo accounts
-  const demoAccount = DEMO_ACCOUNTS.find(
-    (account) =>
-      account.email === cleanEmail &&
-      account.password === password
-  );
-
-  if (demoAccount) {
-    await delay(500);
-
-    return {
-      name: demoAccount.name,
-      email: demoAccount.email,
-      role: demoAccount.role,
-      token: "demo-token",
-    };
-  }
-
-  // Real backend login
-  // Backend automatically returns the user's role
-  const result = await apiRequest("/auth/login", {
-    method: "POST",
-    body: JSON.stringify({
+  try {
+    const result = await client.post("/auth/login", {
       email: cleanEmail,
       password,
-    }),
+    });
+    return normalizeUser(result);
+  } catch (err) {
+    // If backend rejects credentials, check if it's a demo account that needs auto-provisioning
+    const demoAccount = DEMO_ACCOUNTS.find(
+      (a) => a.email === cleanEmail && a.password === password
+    );
+
+    if (demoAccount) {
+      try {
+        const registered = await register(
+          demoAccount.name,
+          demoAccount.email,
+          demoAccount.password,
+          demoAccount.role
+        );
+        return registered;
+      } catch (regErr) {
+        // If registration fails because user already exists with different password, rethrow original
+        throw err;
+      }
+    }
+
+    throw err;
+  }
+}
+
+/**
+ * Register a new user with the selected role.
+ * - leader -> /auth/register-as-leader
+ * - outgoing -> /auth/register-as-outgoing
+ * - incoming -> /auth/register
+ */
+export async function register(name, email, password, role = "incoming") {
+  const cleanRole = role === "member" ? "incoming" : role;
+  if (!["leader", "outgoing", "incoming"].includes(cleanRole)) {
+    throw new Error("Role must be one of: Team Leader, Outgoing Member, or Incoming Member.");
+  }
+
+  let endpoint = "/auth/register";
+  if (cleanRole === "leader") {
+    endpoint = "/auth/register-as-leader";
+  } else if (cleanRole === "outgoing") {
+    endpoint = "/auth/register-as-outgoing";
+  }
+
+  const result = await client.post(endpoint, {
+    name: name.trim(),
+    email: email.trim().toLowerCase(),
+    password,
   });
 
   return normalizeUser(result);
 }
 
-// Registration: separate API for Team Leader
-export async function register(
-  name,
-  email,
-  password,
-  role = "incoming"
-) {
-  if (!["leader", "incoming"].includes(role)) {
-    throw new Error(
-      "Only Team Leader and Incoming Member registration is available."
-    );
+/**
+ * Verify current session using stored token or HttpOnly cookie.
+ */
+export async function getCurrentUser() {
+  const cached = getUser();
+  const token = getToken();
+
+  try {
+    const result = await client.get("/auth/me");
+    const user = result.data || result.user;
+    if (user) {
+      const refreshed = {
+        ...cached,
+        ...user,
+        token: token || cached?.token,
+      };
+      setUser(refreshed);
+      return refreshed;
+    }
+  } catch {
+    // If /auth/me fails (e.g. offline or unauthorized), fallback to cached session if available
+    if (cached && token) {
+      return cached;
+    }
+    clearAuth();
+    return null;
   }
 
-  const endpoint =
-    role === "leader"
-      ? "/auth/register-as-leader"
-      : "/auth/register";
+  return null;
+}
 
-  const result = await apiRequest(endpoint, {
-    method: "POST",
-    body: JSON.stringify({
-      name: name.trim(),
-      email: email.trim().toLowerCase(),
-      password,
-    }),
+export function logout() {
+  clearAuth();
+}
+
+/**
+ * Request password reset token.
+ * In dev/test, data.resetToken will be returned directly.
+ */
+export async function forgotPassword(email) {
+  const cleanEmail = email.trim().toLowerCase();
+  const result = await client.post("/auth/forgot-password", { email: cleanEmail });
+  return result;
+}
+
+/**
+ * Apply password reset using token and new password.
+ */
+export async function resetPassword(token, newPassword) {
+  const result = await client.post("/auth/reset-password", {
+    token: token.trim(),
+    newPassword,
   });
-
-  return normalizeUser(result);
+  return result;
 }

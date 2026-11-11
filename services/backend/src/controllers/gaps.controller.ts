@@ -19,7 +19,9 @@ const listUnresolvedGapsController = async (
     GapQuestion.find({
       projectId,
       status: "pending",
-    }),
+    })
+      .populate("relatedFindingId", "claim category verification_status source_id topic")
+      .sort({ createdAt: -1 }),
   ]);
 
   res.status(200).json({
@@ -39,7 +41,10 @@ const gapQuestionsController = async (
   const { projectId } = req.params;
 
   const questions = await GapQuestion.find({ projectId })
-    .populate("relatedFindingId", "claim category verification_status")
+    .populate(
+      "relatedFindingId",
+      "claim category verification_status source_id topic owner rationale",
+    )
     .sort({ createdAt: -1 });
 
   res.status(200).json({

@@ -1,45 +1,74 @@
+import { getFindings } from "../api/findingsApi.js";
+import { getProjects } from "../api/projectsApi.js";
+import { getReadiness } from "../api/gapsApi.js";
+import { normalizeStatusKey } from "../components/Badges.jsx";
 
-const dashboardData = {
-  stats: {
-    total: 24,
-    supported: 14,
-    needsReview: 7,
-    conflicting: 3,
-  },
+/**
+ * Fetch and aggregate real dashboard data for a project.
+ */
+export async function getDashboardData(projectId = null) {
+  let targetProjectId = projectId;
 
-  activities: [
-    {
-      id: 1,
-      title: "GitHub repository connected",
-      description: "Project repository activity imported.",
-      time: "Today, 10:30 AM",
-      type: "github",
-    },
-    {
-      id: 2,
-      title: "Meeting notes uploaded",
-      description: "Project meeting notes added.",
-      time: "Today, 11:15 AM",
-      type: "upload",
-    },
-    {
-      id: 3,
-      title: "Finding approved",
-      description: "A finding was approved by the team leader.",
-      time: "Today, 12:20 PM",
-      type: "approved",
-    },
-  ],
+  if (!targetProjectId) {
+    try {
+      const projects = await getProjects();
+      if (Array.isArray(projects) && projects.length > 0) {
+        targetProjectId = projects[0]._id || projects[0].id;
+      }
+    } catch {
+      // Continue without project
+    }
+  }
 
-  contribution: [
-    { member: "Member A", contribution: 45 },
-    { member: "Member B", contribution: 30 },
-    { member: "Member C", contribution: 15 },
-    { member: "Member D", contribution: 10 },
-  ],
-};
+  if (!targetProjectId) {
+    return {
+      stats: {
+        total: 0,
+        supported: 0,
+        needsReview: 0,
+        conflicting: 0,
+        unknown: 0,
+      },
+      activities: [],
+      contribution: [],
+    };
+  }
 
-/** Return the shared sample dashboard data object. */
-export async function getDashboardData() {
-  return dashboardData;
+  try {
+    const findings = await getFindings(targetProjectId).catch(() => []);
+    const counts = {
+      total: findings.length,
+      supported: 0,
+      needsReview: 0,
+      conflicting: 0,
+      unknown: 0,
+    };
+
+    findings.forEach((f) => {
+      const key = normalizeStatusKey(f.status || f.verification_status);
+      if (key === "supported") counts.supported++;
+      else if (key === "needs_review") counts.needsReview++;
+      else if (key === "conflicting") counts.conflicting++;
+      else counts.unknown++;
+    });
+
+    return {
+      stats: counts,
+      findings,
+      projectId: targetProjectId,
+    };
+  } catch (err) {
+    console.warn("Could not calculate live dashboard data:", err);
+    return {
+      stats: {
+        total: 0,
+        supported: 0,
+        needsReview: 0,
+        conflicting: 0,
+        unknown: 0,
+      },
+      findings: [],
+      projectId: targetProjectId,
+    };
+  }
 }

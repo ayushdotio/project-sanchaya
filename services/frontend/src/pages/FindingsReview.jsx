@@ -1,11 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
-import { getFindings, getSources } from "../api/findingsApi";
+import {
+  getFindings,
+  getSources,
+  approveFinding,
+  rejectFinding,
+  editFinding,
+  reverifyFinding,
+} from "../api/findingsApi";
 import {
   StatusBadge,
   FreshnessBadge,
   ReviewBadge,
+  SelfReportedBadge,
   STATUS,
   REVIEW_LABEL,
+  normalizeStatusKey,
 } from "../components/Badges";
 
 const FILTERS = ["all", "supported", "needs_review", "conflicting", "unknown"];
@@ -47,20 +56,29 @@ function StatusStrip({ findings, selectedId, onSelect }) {
 }
 
 function SourceSlip({ item, source }) {
+  const isSelfReported =
+    item.evidence_origin === "self_reported" ||
+    item.sourceId?.startsWith("SRC-GAP") ||
+    source?.origin === "self_reported";
+
   return (
     <figure className="source-slip m-0 rounded-xl border border-[#E1E8E5] bg-[#F8FBFA] p-4">
-      <figcaption className="mb-3">
-        <p className="text-sm font-semibold text-[#001E2B]">
-          {source ? source.type : "Source not found"}
-        </p>
+      <figcaption className="mb-3 flex items-start justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-[#001E2B]">
+            {source ? source.type : isSelfReported ? "Outgoing Member" : "Source not found"}
+          </p>
 
-        <p className="text-sm text-[#4A5F5B]">
-          {source ? source.title : item.sourceId}
-        </p>
+          <p className="text-sm text-[#4A5F5B]">
+            {source ? source.title : item.sourceId}
+          </p>
 
-        <p className="mt-0.5 text-xs font-medium tabular-nums text-[#4A5F5B]">
-          {item.sourceId}
-        </p>
+          <p className="mt-0.5 text-xs font-medium tabular-nums text-[#4A5F5B]">
+            {item.sourceId}
+          </p>
+        </div>
+
+        {isSelfReported && <SelfReportedBadge />}
       </figcaption>
 
       <blockquote className="m-0 text-[17px] leading-8 text-[#001E2B]">
@@ -164,11 +182,13 @@ function ReviewNotification({ notice, onDismiss }) {
   );
 }
 
-export default function FindingsReview({ onContinue }) {
+export default function FindingsReview({ projectId = "", onContinue }) {
   const [findings, setFindings] = useState([]);
   const [sources, setSources] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [actionLoading, setActionLoading] = useState(false);
   const [filter, setFilter] = useState("all");
   const [selectedId, setSelectedId] = useState(null);
   const [editing, setEditing] = useState(false);
@@ -178,7 +198,7 @@ export default function FindingsReview({ onContinue }) {
   useEffect(() => {
     let active = true;
 
-    Promise.all([getFindings(), getSources()])
+    Promise.all([getFindings(projectId), getSources(projectId)])
       .then(([loadedFindings, loadedSources]) => {
         if (!active) return;
 
@@ -188,10 +208,11 @@ export default function FindingsReview({ onContinue }) {
         );
         setSelectedId(loadedFindings[0]?.id ?? null);
       })
-      .catch(() => {
+      .catch((err) => {
         if (active) {
           setError(
-            "Could not load findings. Check that the backend is running, then reload."
+            err.message ||
+              "Could not load findings. Check that the backend is running, then reload."
           );
         }
       })
@@ -202,18 +223,18 @@ export default function FindingsReview({ onContinue }) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [projectId]);
 
   // Automatically hide approval/rejection notification after 4 seconds.
-useEffect(() => {
-  if (!verificationNotice) return;
+  useEffect(() => {
+    if (!verificationNotice) return;
 
-  const timer = setTimeout(() => {
-    setVerificationNotice(null);
-  }, 4000);
+    const timer = setTimeout(() => {
+      setVerificationNotice(null);
+    }, 4000);
 
-  return () => clearTimeout(timer);
-}, [verificationNotice]);
+    return () => clearTimeout(timer);
+  }, [verificationNotice]);
 
   const counts = useMemo(() => {
     const result = { all: findings.length };
@@ -263,23 +284,87 @@ useEffect(() => {
     }
   }
 
+  async function handleApprove(id) {
+    setActionError("");
+    setActionLoading(true);
+    try {
+      if (projectId) {
+        await approveFinding(projectId, id);
+      }
+      update(id, { review: "approved" });
+    } catch (err) {
+      console.error("Approve failed:", err);
+      setActionError(err.message || "Failed to approve finding.");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleReject(id) {
+    setActionError("");
+    setActionLoading(true);
+    try {
+      if (projectId) {
+        await rejectFinding(projectId, id);
+      }
+      update(id, { review: "rejected" });
+    } catch (err) {
+      console.error("Reject failed:", err);
+      setActionError(err.message || "Failed to reject finding.");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleReverify(id) {
+    setActionError("");
+    setActionLoading(true);
+    try {
+      if (projectId) {
+        const verified = await reverifyFinding(projectId, id);
+        update(id, {
+          status: verified.status,
+          rawStatus: verified.rawStatus,
+          recheck: false,
+        });
+      }
+    } catch (err) {
+      console.error("Re-verify failed:", err);
+      setActionError(err.message || "Failed to re-verify finding evidence.");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
   function select(id) {
     setSelectedId(id);
     setEditing(false);
+    setActionError("");
   }
 
   function startEdit() {
-    setDraft(selected.claim);
+    setDraft(selected?.claim || "");
     setEditing(true);
   }
 
-  function saveEdit() {
+  async function saveEdit() {
     const text = draft.trim();
-
     if (!text) return;
 
-    update(selected.id, { claim: text, edited: true });
-    setEditing(false);
+    setActionError("");
+    setActionLoading(true);
+    try {
+      if (projectId && selected?.id) {
+        await editFinding(projectId, selected.id, text, false);
+      }
+      update(selected.id, { claim: text, edited: true });
+      setEditing(false);
+    } catch (err) {
+      console.error("Edit failed:", err);
+      setActionError(err.message || "Failed to save edited claim.");
+    } finally {
+      setActionLoading(false);
+    }
   }
 
   if (loading) {
@@ -453,6 +538,10 @@ useEffect(() => {
                     review={selected.review}
                     edited={selected.edited}
                   />
+                  {(selected.evidence_origin === "self_reported" ||
+                    selected.evidence_badge === "Self-reported") && (
+                    <SelfReportedBadge />
+                  )}
                 </div>
 
                 <p className="mb-1 text-sm font-semibold text-[#4A5F5B]">
@@ -543,36 +632,47 @@ useEffect(() => {
                   </p>
                 )}
 
+              {actionError && (
+                <p className="rounded-lg bg-red-50 p-3 text-xs text-red-700">
+                  {actionError}
+                </p>
+              )}
+
               <div className="flex flex-wrap items-center gap-3 border-t border-[#E1E8E5] pt-5">
                 <button
                   type="button"
-                  onClick={() =>
-                    update(selected.id, { review: "approved" })
-                  }
-                  disabled={selected.review === "approved"}
+                  onClick={() => handleApprove(selected.id)}
+                  disabled={selected.review === "approved" || actionLoading}
                   className={`rounded-lg bg-[#001E2B] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#023430] disabled:bg-[#C9CFDC] disabled:text-[#4A5F5B] ${focusRing}`}
                 >
-                  Approve
+                  {actionLoading ? "Processing..." : "Approve"}
                 </button>
 
                 <button
                   type="button"
-                  onClick={() =>
-                    update(selected.id, { review: "rejected" })
-                  }
-                  disabled={selected.review === "rejected"}
+                  onClick={() => handleReject(selected.id)}
+                  disabled={selected.review === "rejected" || actionLoading}
                   className={`rounded-lg border border-[#001E2B] bg-white px-5 py-2.5 text-sm font-semibold text-[#001E2B] transition-colors hover:bg-[#F5F8F7] disabled:border-[#C9CFDC] disabled:text-[#8A92A6] ${focusRing}`}
                 >
-                  Reject
+                  {actionLoading ? "Processing..." : "Reject"}
                 </button>
 
                 <button
                   type="button"
                   onClick={startEdit}
-                  disabled={editing}
+                  disabled={editing || actionLoading}
                   className={`rounded-lg bg-transparent px-3 py-2.5 text-sm font-semibold text-[#001E2B] underline underline-offset-4 disabled:text-[#8A92A6] ${focusRing}`}
                 >
                   Edit claim
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleReverify(selected.id)}
+                  disabled={actionLoading}
+                  className={`rounded-lg border border-[#DCE9E3] bg-[#F7FAF8] px-3.5 py-2.5 text-sm font-semibold text-[#087A3D] transition hover:bg-[#EAF8EF] disabled:opacity-50 ${focusRing}`}
+                >
+                  {actionLoading ? "Checking..." : "Re-verify Evidence"}
                 </button>
 
                 {selected.review !== "pending" && (

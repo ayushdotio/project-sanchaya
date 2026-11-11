@@ -6,6 +6,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import {
   registerController,
   registerAsLeaderController,
+  registerAsOutgoingController,
   loginController,
   getmeController,
   forgotPasswordController,
@@ -84,6 +85,18 @@ router.post(
   "/register-as-leader",
   validateBody(registerSchema),
   asyncHandler(registerAsLeaderController),
+);
+
+/**
+ * @name : Register as Outgoing Member API
+ * @route : POST /api/auth/register-as-outgoing
+ * @access : Public (validated via `registerSchema`)
+ * @description : Registers a new user account with the `"outgoing"` role.
+ */
+router.post(
+  "/register-as-outgoing",
+  validateBody(registerSchema),
+  asyncHandler(registerAsOutgoingController),
 );
 
 /**

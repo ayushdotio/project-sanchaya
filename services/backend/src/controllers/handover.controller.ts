@@ -3,6 +3,7 @@ import { Project } from "../models/Project.js";
 import { Finding } from "../models/Finding.js";
 import { GapQuestion } from "../models/GapQuestion.js";
 import { HandoverHistory } from "../models/HandoverHistory.js";
+import { RiskMap } from "../models/RiskMap.js";
 import { pythonBridge } from "../services/pythonBridge.js";
 
 /**
@@ -14,7 +15,7 @@ const verifyHandoverAccess = async (
   res: Response,
   projectId: string,
 ): Promise<any | null> => {
-  const project = await Project.findById(projectId);
+  const project = (req as any).project || (await Project.findById(projectId));
   if (!project) {
     res.status(404).json({ success: false, error: "Project not found" });
     return null;
@@ -45,8 +46,8 @@ const handoverReportController = async (
   const project = await verifyHandoverAccess(req, res, projectId);
   if (!project) return;
 
-  // Fetch approved/supported findings and answered gap questions
-  const [findings, gapAnswers] = await Promise.all([
+  // Fetch approved findings, answered gap questions, and analytics risk maps
+  const [rawFindings, rawGapAnswers, rawRiskMaps] = await Promise.all([
     Finding.find({
       projectId,
       review_status: "approved",
@@ -54,8 +55,33 @@ const handoverReportController = async (
     GapQuestion.find({
       projectId,
       status: { $in: ["answered", "approved"] },
-    }).select("question answer evidence_badge answeredAt"),
+    }).select("question answer evidence_badge answeredAt gap_category"),
+    RiskMap.find({ projectId }).sort({ riskTier: 1, contributionPercentage: -1 }),
   ]);
+
+  let findings = rawFindings;
+  let gapAnswers = rawGapAnswers;
+  let riskMaps = rawRiskMaps;
+
+  // Enforce recipientScope filtering for incoming members when restricted
+  if (req.user!.role === "incoming" && Array.isArray(project.recipientScope) && project.recipientScope.length > 0) {
+    const scope = new Set(project.recipientScope.map((s: string) => s.trim().toLowerCase()));
+    const fullProject = scope.has("project") || scope.has("all") || scope.has("*");
+    if (!fullProject) {
+      const allowedCategories = new Set<string>();
+      if (scope.has("decisions") || scope.has("decision")) allowedCategories.add("decision");
+      if (scope.has("tasks") || scope.has("task")) allowedCategories.add("task");
+      if (scope.has("dependencies") || scope.has("dependency")) allowedCategories.add("dependency");
+      if (scope.has("known_problems") || scope.has("blockers") || scope.has("blocker")) allowedCategories.add("blocker");
+      findings = rawFindings.filter((f) => allowedCategories.has(f.category));
+      if (!scope.has("open_gaps") && !scope.has("gaps") && !scope.has("gap_answers")) {
+        gapAnswers = [];
+      }
+      if (!scope.has("risk_areas") && !scope.has("risks") && !scope.has("risk_map")) {
+        riskMaps = [];
+      }
+    }
+  }
 
   res.status(200).json({
     success: true,
@@ -70,6 +96,7 @@ const handoverReportController = async (
       },
       findings,
       gapAnswers,
+      riskMaps,
     },
   });
 };
@@ -83,13 +110,31 @@ const exportPDFController = async (
   const project = await verifyHandoverAccess(req, res, projectId);
   if (!project) return;
 
-  const pdfStreamResponse = await pythonBridge.getPdfStream(projectId);
+  const allowDraft =
+    req.user!.role === "leader" &&
+    (req.query.draft === "true" || project.readinessStatus !== "Approved for Sharing");
+
+  const pdfStreamResponse = await pythonBridge.getPdfStream(projectId, {
+    allowDraft,
+  });
 
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader(
     "Content-Disposition",
     `attachment; filename="sanchaya-handover-${projectId}.pdf"`,
   );
+
+  pdfStreamResponse.data.on("error", (streamErr: Error) => {
+    console.error("[Handover PDF Stream Error]", streamErr.message);
+    if (!res.headersSent) {
+      res.status(502).json({
+        success: false,
+        error: "Failed to stream handover PDF from Analytics Service",
+      });
+    } else {
+      res.end();
+    }
+  });
 
   pdfStreamResponse.data.pipe(res);
 };
@@ -103,20 +148,26 @@ const handoverAcknowledgementController = async (
   const project = await verifyHandoverAccess(req, res, projectId);
   if (!project) return;
 
+  const latestSnapshot = await HandoverHistory.findOne({
+    projectId: project._id,
+  }).sort({ version: -1 });
+  const currentVersion = latestSnapshot?.version ?? 1;
+
   const receipt = await HandoverHistory.create({
     projectId: project._id,
-    version: 1,
+    version: currentVersion,
     approvedSnapshot: {
       projectName: project.name,
       approvedAt: project.approvedAt,
       readinessStatus: project.readinessStatus,
+      snapshotHash: project.approvedSnapshotHash ?? null,
     },
     acknowledgedBy: req.user!.userId as any,
     acknowledgedAt: new Date(),
   });
 
   console.log(
-    `[Handover Receipt Acknowledged] Project: ${projectId} by User: ${req.user!.userId}`,
+    `[Handover Receipt Acknowledged] Project: ${projectId} v${currentVersion} by User: ${req.user!.userId}`,
   );
 
   res.status(200).json({

@@ -1,4 +1,6 @@
 import { Request, Response } from "express";
+import { Finding } from "../models/Finding.js";
+import { HandoverHistory } from "../models/HandoverHistory.js";
 import { Project } from "../models/Project.js";
 import { pythonBridge } from "../services/pythonBridge.js";
 
@@ -54,11 +56,17 @@ const readinessEvaluateController = async (
 ): Promise<void> => {
   const projectId = req.params.projectId as string;
 
+  const project = await Project.findById(projectId);
+  if (!project) {
+    res.status(404).json({ success: false, error: "Project not found" });
+    return;
+  }
+
   const result = await pythonBridge.computeRiskAndReadiness(projectId);
 
   res.status(200).json({
     success: true,
-    message: "Readiness evaluated via Analytics Service",
+    message: result.message || "Readiness evaluated via Analytics Service",
     data: result,
   });
 };
@@ -68,12 +76,23 @@ const readinessSignOffController = async (
   res: Response,
 ): Promise<void> => {
   const projectId = req.params.projectId as string;
-  const { checklistUpdates } = req.body;
+  const { checklistUpdates, evaluateWithAnalytics } = req.body || {};
 
   const project = await Project.findById(projectId);
   if (!project) {
     res.status(404).json({ success: false, error: "Project not found" });
     return;
+  }
+
+  if (evaluateWithAnalytics === true) {
+    const evaluated = await pythonBridge.computeRiskAndReadiness(projectId);
+    if (evaluated.checklist) {
+      Object.assign(project.readinessChecklist, evaluated.checklist);
+    }
+    const snapshotHash = (evaluated.riskSummary as any)?.snapshot_hash;
+    if (snapshotHash) {
+      project.approvedSnapshotHash = snapshotHash;
+    }
   }
 
   // Apply any explicit checklist confirmations
@@ -116,6 +135,25 @@ const readinessSignOffController = async (
   project.approvedAt = new Date();
   await project.save();
 
+  // Record an immutable handover snapshot version in handover_history
+  const [latestHistory, approvedFindingsCount] = await Promise.all([
+    HandoverHistory.findOne({ projectId: project._id }).sort({ version: -1 }),
+    Finding.countDocuments({ projectId: project._id, review_status: "approved" }),
+  ]);
+  const nextVersion = (latestHistory?.version ?? 0) + 1;
+
+  await HandoverHistory.create({
+    projectId: project._id,
+    version: nextVersion,
+    approvedSnapshot: {
+      projectName: project.name,
+      approvedAt: project.approvedAt,
+      readinessStatus: project.readinessStatus,
+      approvedFindingsCount,
+      snapshotHash: project.approvedSnapshotHash ?? null,
+    },
+  });
+
   res.status(200).json({
     success: true,
     message:
@@ -124,6 +162,7 @@ const readinessSignOffController = async (
       readinessStatus: project.readinessStatus,
       checklist: project.readinessChecklist,
       approvedAt: project.approvedAt,
+      version: nextVersion,
     },
   });
 };

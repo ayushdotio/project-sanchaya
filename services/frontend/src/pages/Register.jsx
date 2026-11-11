@@ -203,12 +203,19 @@ export default function Register({ onBackToLogin }) {
                     >
                       <option value="">Choose your role</option>
                       <option value="leader">Team Leader</option>
+                      <option value="outgoing">Outgoing Member (Departing)</option>
                       <option value="incoming">Incoming Member</option>
                     </select>
 
                     {role === "leader" && (
                       <p className="mt-2 text-xs text-[#68746D]">
                         Register as the Team Leader of your project.
+                      </p>
+                    )}
+
+                    {role === "outgoing" && (
+                      <p className="mt-2 text-xs text-[#68746D]">
+                        Register as an outgoing engineer departing the project.
                       </p>
                     )}
 

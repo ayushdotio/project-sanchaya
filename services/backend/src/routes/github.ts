@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import {
   authenticateToken,
+  requireProjectMembership,
   requireRoles,
 } from "../middlewares/authMiddleware.js";
 import { validateBody } from "../middlewares/validate.js";
@@ -42,6 +43,7 @@ router.post(
   "/:projectId/github/connect",
   authenticateToken,
   requireRoles(["leader", "outgoing"]),
+  requireProjectMembership,
   validateBody(connectSchema),
   asyncHandler(githubConnectController),
 );
@@ -68,6 +70,7 @@ router.post(
   "/:projectId/github/sync",
   authenticateToken,
   requireRoles(["leader", "outgoing"]),
+  requireProjectMembership,
   validateBody(syncSchema),
   asyncHandler(githubSyncController),
 );

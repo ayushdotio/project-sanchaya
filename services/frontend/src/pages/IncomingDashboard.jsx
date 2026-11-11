@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   CheckCircle2,
   Clock,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { getProjects } from "@/services/projectsApi";
 
 export default function IncomingDashboard({
   user,
@@ -21,6 +23,24 @@ export default function IncomingDashboard({
   shared,
   onNavigate,
 }) {
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+
+  useEffect(() => {
+    getProjects()
+      .then((list) => {
+        setProjects(list || []);
+        if (list && list.length > 0) {
+          setSelectedProjectId(list[0]._id || list[0].id);
+        }
+      })
+      .catch((err) => console.warn("Could not load incoming projects:", err));
+  }, []);
+
+  const hasApprovedProject = projects.some(
+    (p) => p.readinessStatus === "Approved for Sharing"
+  );
+
   const confirmed = approved.filter(
     (finding) => finding.status === "supported"
   );
@@ -29,7 +49,7 @@ export default function IncomingDashboard({
     (finding) => finding.status !== "supported"
   );
 
-  const ready = shared && approved.length > 0;
+  const ready = (shared && approved.length > 0) || hasApprovedProject;
 
   const stats = [
     {
@@ -337,7 +357,7 @@ export default function IncomingDashboard({
             </div>
 
             <Button
-              onClick={() => onNavigate("handover")}
+              onClick={() => onNavigate("handover", selectedProjectId)}
               disabled={!ready}
               className="mt-6 h-11 gap-2 rounded-xl bg-[#159B59] px-5 text-white shadow-sm transition hover:bg-[#087A3D] disabled:cursor-not-allowed disabled:opacity-50"
             >

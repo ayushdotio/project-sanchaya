@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getFindings } from "../api/findingsApi";
+import { getProjects } from "@/services/projectsApi";
 import { Button } from "@/components/ui/button";
 import {
   ClipboardList,
@@ -21,21 +22,28 @@ export default function OutgoingDashboard({ user, onNavigate }) {
   const [findings, setFindings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
 
   useEffect(() => {
-    async function loadFindings() {
+    async function loadData() {
       try {
-        const result = await getFindings();
+        const projectList = await getProjects().catch(() => []);
+        setProjects(projectList);
+        const pid = projectList[0]?._id || projectList[0]?.id || "";
+        setSelectedProjectId(pid);
+
+        const result = await getFindings(pid);
         setFindings(result);
       } catch (err) {
-        console.error("Could not load findings:", err);
+        console.error("Could not load outgoing dashboard data:", err);
         setError(true);
       } finally {
         setLoading(false);
       }
     }
 
-    loadFindings();
+    loadData();
   }, []);
 
   const pendingFindings = findings.filter(
@@ -250,7 +258,7 @@ export default function OutgoingDashboard({ user, onNavigate }) {
             )}
 
             <Button
-              onClick={() => onNavigate("questions")}
+              onClick={() => onNavigate("questions", selectedProjectId)}
               className="h-11 gap-2 rounded-xl bg-[#159B59] px-5 text-white shadow-sm transition hover:bg-[#087A3D]"
             >
               Answer Handover Questions

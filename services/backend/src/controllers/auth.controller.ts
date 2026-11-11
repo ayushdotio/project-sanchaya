@@ -146,6 +146,19 @@ const registerAsLeaderController = async (
   await registerUserWithRole(req, res, "leader", "Leader registered successfully");
 };
 
+const registerAsOutgoingController = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  // Server-enforced role assignment to "outgoing" for outgoing project members.
+  await registerUserWithRole(
+    req,
+    res,
+    "outgoing",
+    "Outgoing member registered successfully",
+  );
+};
+
 const loginController = async (req: Request, res: Response): Promise<void> => {
   const { email, password } = req.body;
 
@@ -275,6 +288,7 @@ const resetPasswordController = async (
 export {
   registerController,
   registerAsLeaderController,
+  registerAsOutgoingController,
   loginController,
   getmeController,
   forgotPasswordController,

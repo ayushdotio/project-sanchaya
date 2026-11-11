@@ -6,6 +6,7 @@ import { extractDocumentText } from "../services/documentParser.js";
 import { parseTaskCsv } from "../services/taskParser.js";
 import { scanAndRedact } from "../services/secretScanner.js";
 import { storageService } from "../services/storageService.js";
+import { isProjectMember } from "../middlewares/authMiddleware.js";
 
 /**
  * Helper to generate deterministic canonical ID: SRC-DOC-xxx or SRC-TSK-xxx
@@ -32,6 +33,13 @@ const uploadNotesController = async (
   const project = await Project.findById(projectId);
   if (!project) {
     res.status(404).json({ success: false, error: "Project not found" });
+    return;
+  }
+  if (!isProjectMember(project, req.user!.userId)) {
+    res.status(403).json({
+      success: false,
+      error: "Access denied: You are not a member of this project",
+    });
     return;
   }
 
@@ -104,6 +112,13 @@ const uploadTasksController = async (
   const project = await Project.findById(projectId);
   if (!project) {
     res.status(404).json({ success: false, error: "Project not found" });
+    return;
+  }
+  if (!isProjectMember(project, req.user!.userId)) {
+    res.status(403).json({
+      success: false,
+      error: "Access denied: You are not a member of this project",
+    });
     return;
   }
 
@@ -200,6 +215,13 @@ const listProjectDocsController = async (
     res.status(404).json({ success: false, error: "Project not found" });
     return;
   }
+  if (!isProjectMember(project, req.user!.userId)) {
+    res.status(403).json({
+      success: false,
+      error: "Access denied: You are not a member of this project",
+    });
+    return;
+  }
 
   const docs = await storageService.listProjectDocuments(String(project._id));
 
@@ -218,6 +240,13 @@ const fetchProjectDocController = async (
   const project = await Project.findById(projectId);
   if (!project) {
     res.status(404).json({ success: false, error: "Project not found" });
+    return;
+  }
+  if (!isProjectMember(project, req.user!.userId)) {
+    res.status(403).json({
+      success: false,
+      error: "Access denied: You are not a member of this project",
+    });
     return;
   }
 

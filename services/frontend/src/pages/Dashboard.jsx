@@ -1,12 +1,23 @@
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { getDashboardData } from "@/services/dashboardApi";
-import { reconstructProject, getProjectRiskMap } from "@/services/reconstructionApi";
 import {
   getProjects,
   createProject,
   getProjectById,
-} from "@/services/projectsApi";
+  assignMembers,
+} from "@/api/projectsApi";
+import { reconstructProject, getProjectRiskMap } from "@/api/reconstructionApi";
+import { getFindings, scanFreshness } from "@/api/findingsApi";
+import {
+  getUnresolvedGaps,
+  getReadiness,
+  evaluateReadiness,
+  signOffReadiness,
+} from "@/api/gapsApi";
+import { getProjectSources } from "@/api/sourcesApi";
+import { getHandoverHistory } from "@/api/handoverApi";
+import { updateUserRole } from "@/api/usersApi";
 
 import StatsCard from "@/components/dashboard/StatsCard";
 import FindingChart from "@/components/dashboard/FindingChart";
@@ -70,6 +81,158 @@ export default function Dashboard({
   const [riskMapData, setRiskMapData] = useState(null);
   const [riskMapError, setRiskMapError] = useState("");
 
+  // Live subresource state for opened project
+  const [projectFindings, setProjectFindings] = useState([]);
+  const [projectSources, setProjectSources] = useState([]);
+  const [historyData, setHistoryData] = useState([]);
+  const [readinessData, setReadinessData] = useState(null);
+  const [gapsData, setGapsData] = useState(null);
+  const [evaluatingReadiness, setEvaluatingReadiness] = useState(false);
+  const [signingOff, setSigningOff] = useState(false);
+  const [freshnessScanning, setFreshnessScanning] = useState(false);
+  const [freshnessReport, setFreshnessReport] = useState(null);
+  const [freshnessError, setFreshnessError] = useState("");
+  const [showMemberManagement, setShowMemberManagement] = useState(false);
+  const [outgoingInput, setOutgoingInput] = useState("");
+  const [incomingInput, setIncomingInput] = useState("");
+  const [assigningMembers, setAssigningMembers] = useState(false);
+  const [memberActionMessage, setMemberActionMessage] = useState("");
+  const [memberActionError, setMemberActionError] = useState("");
+  const [updatingRoleId, setUpdatingRoleId] = useState("");
+
+  async function loadProjectSubresources(projectId) {
+    if (!projectId) return;
+    try {
+      const [findings, riskMap, readiness, gaps, sources, history] = await Promise.all([
+        getFindings(projectId).catch(() => []),
+        getProjectRiskMap(projectId).catch(() => null),
+        getReadiness(projectId).catch(() => null),
+        getUnresolvedGaps(projectId).catch(() => null),
+        getProjectSources(projectId).catch(() => []),
+        getHandoverHistory(projectId).catch(() => []),
+      ]);
+      setProjectFindings(findings);
+      if (sources) setProjectSources(sources);
+      if (history) setHistoryData(history);
+      if (riskMap) setRiskMapData(riskMap);
+      if (readiness) setReadinessData(readiness);
+      if (gaps) setGapsData(gaps);
+    } catch (err) {
+      console.warn("Could not load all project subresources:", err);
+    }
+  }
+
+  async function handleScanFreshness() {
+    const projectId = selectedProject?._id || selectedProject?.id;
+    if (!projectId) return;
+    setFreshnessScanning(true);
+    setFreshnessError("");
+    setFreshnessReport(null);
+    try {
+      const report = await scanFreshness(projectId);
+      setFreshnessReport(report?.data || report);
+      await loadProjectSubresources(projectId);
+    } catch (err) {
+      console.error("Freshness scan failed:", err);
+      setFreshnessError(err.message || "Freshness scan failed.");
+    } finally {
+      setFreshnessScanning(false);
+    }
+  }
+
+  async function handleAssignMembers(e) {
+    e?.preventDefault();
+    const projectId = selectedProject?._id || selectedProject?.id;
+    if (!projectId) return;
+
+    setAssigningMembers(true);
+    setMemberActionMessage("");
+    setMemberActionError("");
+
+    const outgoingIds = outgoingInput
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const incomingIds = incomingInput
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    try {
+      const updated = await assignMembers(projectId, {
+        outgoingIds: outgoingIds.length > 0 ? outgoingIds : undefined,
+        incomingIds: incomingIds.length > 0 ? incomingIds : undefined,
+      });
+      setSelectedProject(updated);
+      setMemberActionMessage("Project members successfully updated.");
+      setOutgoingInput("");
+      setIncomingInput("");
+      await loadProjectSubresources(projectId);
+    } catch (err) {
+      console.error("Assign members failed:", err);
+      setMemberActionError(err.message || "Failed to assign project members.");
+    } finally {
+      setAssigningMembers(false);
+    }
+  }
+
+  async function handleUpdateMemberRole(userId, newRole) {
+    if (!userId || !newRole) return;
+    setUpdatingRoleId(userId);
+    setMemberActionMessage("");
+    setMemberActionError("");
+    try {
+      await updateUserRole(userId, newRole);
+      setMemberActionMessage(`User role updated to '${newRole}'.`);
+      const projectId = selectedProject?._id || selectedProject?.id;
+      if (projectId) {
+        const details = await getProjectById(projectId);
+        setSelectedProject(details);
+      }
+    } catch (err) {
+      console.error("Role update failed:", err);
+      setMemberActionError(err.message || "Failed to update user role.");
+    } finally {
+      setUpdatingRoleId("");
+    }
+  }
+
+  async function handleEvaluateReadiness() {
+    const projectId = selectedProject?._id || selectedProject?.id;
+    if (!projectId) return;
+    setEvaluatingReadiness(true);
+    try {
+      await evaluateReadiness(projectId);
+      await loadProjectSubresources(projectId);
+    } catch (err) {
+      console.error("Evaluate readiness failed:", err);
+      alert(err.message || "Failed to evaluate readiness.");
+    } finally {
+      setEvaluatingReadiness(false);
+    }
+  }
+
+  async function handleSignOff() {
+    const projectId = selectedProject?._id || selectedProject?.id;
+    if (!projectId) return;
+    setSigningOff(true);
+    try {
+      const updated = await signOffReadiness(projectId);
+      if (updated) {
+        setSelectedProject((prev) => ({
+          ...prev,
+          readinessStatus: "Approved for Sharing",
+        }));
+      }
+      await loadProjectSubresources(projectId);
+    } catch (err) {
+      console.error("Sign-off failed:", err);
+      alert(err.message || "Failed to sign-off readiness.");
+    } finally {
+      setSigningOff(false);
+    }
+  }
+
   async function handleOpenProject(project) {
     const projectId = project?._id || project?.id;
 
@@ -85,6 +248,7 @@ export default function Dashboard({
     try {
       const details = await getProjectById(projectId);
       setSelectedProject(details);
+      await loadProjectSubresources(projectId);
     } catch (error) {
       console.error("Project details loading failed:", error);
       setDetailsError(
@@ -111,6 +275,7 @@ export default function Dashboard({
       setReconstructionMessage(
         result?.message || "Knowledge reconstruction was triggered successfully."
       );
+      await loadProjectSubresources(projectId);
     } catch (error) {
       setReconstructionError(
         error.message || "Unable to start knowledge reconstruction."
@@ -165,7 +330,12 @@ export default function Dashboard({
     }
 
     if (projectsResult.status === "fulfilled") {
-      setProjects(projectsResult.value);
+      const projs = projectsResult.value || [];
+      setProjects(projs);
+      if (projs.length > 0) {
+        const firstId = projs[0]._id || projs[0].id;
+        loadProjectSubresources(firstId);
+      }
     } else {
       console.error(
         "Project loading failed:",
@@ -532,28 +702,42 @@ export default function Dashboard({
     );
   }
 
+  const computedStats = useMemo(() => {
+    if (projectFindings && projectFindings.length > 0) {
+      const counts = { total: projectFindings.length, supported: 0, needsReview: 0, conflicting: 0 };
+      projectFindings.forEach((f) => {
+        const s = (f.status || f.verification_status || "").toLowerCase();
+        if (s === "supported") counts.supported++;
+        else if (s === "needs_review" || s === "needsreview") counts.needsReview++;
+        else if (s === "conflicting") counts.conflicting++;
+      });
+      return counts;
+    }
+    return data?.stats || { total: 0, supported: 0, needsReview: 0, conflicting: 0 };
+  }, [projectFindings, data]);
+
   const stats = [
     {
       title: "Total Findings",
-      value: data.stats.total,
+      value: computedStats.total,
       description: "All reconstructed findings",
       type: "total",
     },
     {
       title: "Supported",
-      value: data.stats.supported,
+      value: computedStats.supported,
       description: "Evidence-backed findings",
       type: "supported",
     },
     {
       title: "Needs Review",
-      value: data.stats.needsReview,
+      value: computedStats.needsReview,
       description: "Awaiting verification",
       type: "review",
     },
     {
       title: "Conflicting",
-      value: data.stats.conflicting,
+      value: computedStats.conflicting,
       description: "Conflicting evidence",
       type: "conflicting",
     },
@@ -966,7 +1150,15 @@ export default function Dashboard({
             </div>
           </div>
 
-          <SourceManagement />
+          <SourceManagement
+            projectId={selectedProject?._id || selectedProject?.id}
+            onUploadSources={() =>
+              onNavigate?.(
+                "sources",
+                selectedProject?._id || selectedProject?.id
+              )
+            }
+          />
         </section>
 
         {/* Findings statistics */}
@@ -1026,11 +1218,11 @@ export default function Dashboard({
 
           <div className="grid gap-5 lg:grid-cols-2">
             <div className="dashboard-enter dashboard-delay-1 min-w-0">
-              <FindingChart />
+              <FindingChart findings={projectFindings} />
             </div>
 
             <div className="dashboard-enter dashboard-delay-2 min-w-0">
-              <ContributionChart />
+              <ContributionChart riskMapData={riskMapData} />
             </div>
           </div>
 
@@ -1058,8 +1250,24 @@ export default function Dashboard({
           </div>
 
           <div className="grid gap-5 lg:grid-cols-2">
-            <RecentActivity />
-            <ReadinessPanel />
+            <RecentActivity
+              findings={projectFindings}
+              sources={projectSources}
+              history={historyData}
+            />
+            <ReadinessPanel
+              readiness={
+                readinessData || {
+                  readinessStatus: selectedProject?.readinessStatus,
+                  checklist: selectedProject?.readinessChecklist,
+                }
+              }
+              onEvaluate={handleEvaluateReadiness}
+              onSignOff={handleSignOff}
+              isLeader={user?.role === "leader"}
+              evaluating={evaluatingReadiness}
+              signingOff={signingOff}
+            />
           </div>
         </section>
 
@@ -1079,7 +1287,15 @@ export default function Dashboard({
             </p>
           </div>
 
-          <KnowledgeGapRadar />
+          <KnowledgeGapRadar
+            gapsData={gapsData}
+            onReviewGaps={() =>
+              onNavigate?.(
+                "findings",
+                selectedProject?._id || selectedProject?.id
+              )
+            }
+          />
         </section>
 
         {/* Leader action */}
@@ -1113,7 +1329,12 @@ export default function Dashboard({
 
             {!shared ? (
               <Button
-                onClick={() => onNavigate("findings")}
+                onClick={() =>
+                  onNavigate(
+                    "findings",
+                    selectedProject?._id || selectedProject?.id
+                  )
+                }
                 className="h-11 shrink-0 gap-2 rounded-xl bg-[#159B59] px-5 text-white shadow-sm transition hover:bg-[#087A3D]"
               >
                 <ClipboardCheck size={17} />

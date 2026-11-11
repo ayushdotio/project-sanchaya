@@ -41,11 +41,54 @@ def _rule(n, passed, reasons, blocking=True):
     return {"id": n, "name": RULE_NAMES[n], "passed": passed, "blocking": blocking, "reasons": reasons}
 
 
+def _source_timestamp(s: dict):
+    return s.get("timestamp") or s.get("updated_at") or s.get("created_at") or s.get("imported_at")
+
+
+def _source_scan_completed(s: dict) -> bool:
+    if "scan_completed" in s:
+        return bool(s.get("scan_completed"))
+    meta = s.get("metadata")
+    if isinstance(meta, dict) and "redactionCount" in meta:
+        return True
+    return "redacted_content" in s
+
+
+def _source_type(s: dict):
+    return s.get("type") or s.get("source_type")
+
+
+def _finding_id(f: dict) -> str:
+    return str(f.get("id") or f.get("_id") or "?")
+
+
+def _finding_text(f: dict) -> str:
+    return str(f.get("text") or f.get("claim") or "")
+
+
+def _finding_status(f: dict) -> str:
+    return str(f.get("status") or f.get("verification_status") or "Unknown")
+
+
+def _finding_signoff(f: dict) -> bool:
+    if f.get("reviewer_signoff"):
+        return True
+    return f.get("review_status") == "approved"
+
+
+def _finding_resolved(f: dict) -> bool:
+    if f.get("resolved"):
+        return True
+    return f.get("evidence_origin") == "self_reported" and _finding_status(f) == "Supported"
+
+
 def evaluate(project: dict, required_source_types=None) -> dict:
     sources = project.get("sources", [])
     findings = project.get("findings", [])
     tasks = project.get("tasks", [])
     recipient = project.get("recipient") or {}
+    if required_source_types is None:
+        required_source_types = project.get("required_source_types")
     required_source_types = set(required_source_types or [])
     rules = []
 
@@ -54,38 +97,50 @@ def evaluate(project: dict, required_source_types=None) -> dict:
     if not sources:
         r.append("No sources imported")
     for s in sources:
-        if not s.get("source_id") or not s.get("timestamp"):
+        if not s.get("source_id") or not _source_timestamp(s):
             r.append(f"Source {s.get('source_id', '?')} is missing an ID or timestamp")
-        if not s.get("scan_completed"):
+        if not _source_scan_completed(s):
             r.append(f"Source {s.get('source_id', '?')} has not completed the secret/PII scan")
-    missing = required_source_types - {s.get("type") for s in sources}
+    missing = required_source_types - {_source_type(s) for s in sources}
     for t in sorted(missing):
         r.append(f"Required source type not imported: {t}")
     rules.append(_rule(1, not r, r))
 
     # 2. decisions backed by evidence
-    r = [f"{f['id']}: '{f['text']}' is {f['status']} and has no reviewer sign-off"
-         for f in findings
-         if f.get("category") == "decision" and f.get("status") != "Supported"
-         and not f.get("reviewer_signoff") and f.get("status") not in ("Conflicting", "Unknown")]
+    r = [
+        f"{_finding_id(f)}: '{_finding_text(f)}' is {_finding_status(f)} and has no reviewer sign-off"
+        for f in findings
+        if f.get("category") == "decision"
+        and _finding_status(f) != "Supported"
+        and not _finding_signoff(f)
+        and _finding_status(f) not in ("Conflicting", "Unknown")
+    ]
     rules.append(_rule(2, not r, r))
 
     # 3. open tasks owned or explicitly unknown
-    r = [f"{t['id']}: '{t['title']}' is {t['status']} with no owner"
-         for t in tasks
-         if t.get("status") in ("open", "blocked") and not t.get("assignee") and not t.get("owner_unknown")]
+    r = [
+        f"{t['id']}: '{t['title']}' is {t['status']} with no owner"
+        for t in tasks
+        if t.get("status") in ("open", "blocked") and not t.get("assignee") and not t.get("owner_unknown")
+    ]
     rules.append(_rule(3, not r, r))
 
     # 4. blockers identified
-    r = [f"{t['id']}: '{t['title']}' is blocked but names no blocker and has no sign-off"
-         for t in tasks
-         if t.get("status") == "blocked" and not t.get("blocker") and not t.get("reviewer_signoff")]
+    r = [
+        f"{t['id']}: '{t['title']}' is blocked but names no blocker and has no sign-off"
+        for t in tasks
+        if t.get("status") == "blocked" and not t.get("blocker") and not t.get("reviewer_signoff")
+    ]
     rules.append(_rule(4, not r, r))
 
     # 5. conflicts / unknowns resolved or acknowledged
-    r = [f"{f['id']}: '{f['text']}' is {f['status']} and neither resolved nor acknowledged"
-         for f in findings
-         if f.get("status") in ("Conflicting", "Unknown") and not f.get("resolved") and not f.get("reviewer_signoff")]
+    r = [
+        f"{_finding_id(f)}: '{_finding_text(f)}' is {_finding_status(f)} and neither resolved nor acknowledged"
+        for f in findings
+        if _finding_status(f) in ("Conflicting", "Unknown")
+        and not _finding_resolved(f)
+        and not _finding_signoff(f)
+    ]
     rules.append(_rule(5, not r, r))
 
     # 6. recipient permissions
@@ -118,5 +173,9 @@ def evaluate(project: dict, required_source_types=None) -> dict:
         state = READY_FOR_REVIEW
     else:
         state = APPROVED
-    return {"state": state, "snapshot_hash": cur, "rules": rules,
-            "failing_rules": [x["id"] for x in rules if not x["passed"]]}
+    return {
+        "state": state,
+        "snapshot_hash": cur,
+        "rules": rules,
+        "failing_rules": [x["id"] for x in rules if not x["passed"]],
+    }

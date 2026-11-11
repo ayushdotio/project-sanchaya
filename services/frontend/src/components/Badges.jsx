@@ -44,8 +44,18 @@ export const REVIEW_LABEL = {
 const chip =
   "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap";
 
+export function normalizeStatusKey(status) {
+  if (!status) return "unknown";
+  const s = String(status).toLowerCase().trim().replace(/[\s-]+/g, "_");
+  if (s === "needs_review" || s === "needsreview") return "needs_review";
+  if (s === "supported") return "supported";
+  if (s === "conflicting") return "conflicting";
+  return "unknown";
+}
+
 export function StatusBadge({ status }) {
-  const s = STATUS[status] ?? STATUS.unknown;
+  const key = normalizeStatusKey(status);
+  const s = STATUS[key] ?? STATUS.unknown;
   return (
     <span className={`${chip} ${s.tint} ${s.text}`}>
       <span aria-hidden="true" className={`h-2 w-2 rounded-full ${s.dot}`} />
@@ -76,6 +86,22 @@ export function ReviewBadge({ review, edited }) {
     <span className="inline-flex gap-1">
       {review !== "pending" && <span className={`${chip} ${tone}`}>{REVIEW_LABEL[review]}</span>}
       {edited && <span className={`${chip} bg-white text-[#4A5F5B] ring-1 ring-[#E1E8E5]`}>Edited</span>}
+    </span>
+  );
+}
+
+/**
+ * Domain Invariant 5: Self-Reported Evidence Badge
+ * Outgoing member responses in the Gap Loop must always display this badge.
+ */
+export function SelfReportedBadge() {
+  return (
+    <span
+      className={`${chip} bg-[#E0F2FE] text-[#0369A1] ring-1 ring-[#BAE6FD]`}
+      title="Provided directly by departing team member via the Gap-to-Question Loop"
+    >
+      <span aria-hidden="true" className="h-2 w-2 rounded-full bg-[#0284C7]" />
+      Self-reported
     </span>
   );
 }

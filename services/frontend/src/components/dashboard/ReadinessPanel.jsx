@@ -1,10 +1,11 @@
-
 import { useState } from "react";
 import {
   CheckCircle2,
   Circle,
   ClipboardCheck,
   AlertCircle,
+  RefreshCw,
+  Award,
 } from "lucide-react";
 
 import {
@@ -15,38 +16,32 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 
-const initialChecks = [
-  { id: 1, title: "Project sources connected", done: true },
-  { id: 2, title: "Project decisions reconstructed", done: true },
-  { id: 3, title: "Pending tasks identified", done: true },
-  { id: 4, title: "Blockers and dependencies reviewed", done: true },
-  { id: 5, title: "Evidence verified", done: true },
-  { id: 6, title: "Knowledge gaps resolved", done: false },
-  { id: 7, title: "Team leader approval completed", done: false },
+const CHECKLIST_ITEMS = [
+  { key: "sourcesVerified", title: "Project sources imported & verified" },
+  { key: "decisionsBackedByEvidence", title: "Technical decisions backed by evidence" },
+  { key: "unfinishedTasksAssignedOrUnknown", title: "Unfinished tasks assigned or marked unknown" },
+  { key: "blockersIdentified", title: "Blockers and dependencies identified" },
+  { key: "conflictsDisclosed", title: "Conflicts and uncertainties disclosed" },
+  { key: "recipientPermissionsChecked", title: "Recipient permissions checked" },
+  { key: "leaderApprovalRecorded", title: "Team leader approval recorded" },
 ];
 
-export default function ReadinessPanel() {
-  const [checks, setChecks] = useState(initialChecks);
+export default function ReadinessPanel({
+  readiness = null,
+  onEvaluate = null,
+  onSignOff = null,
+  isLeader = true,
+  evaluating = false,
+  signingOff = false,
+}) {
+  const checklist = readiness?.checklist || {};
+  const status = readiness?.readinessStatus || "Needs Attention";
 
-  const completed = checks.filter((item) => item.done).length;
-  const percentage = Math.round((completed / checks.length) * 100);
+  const completedCount = CHECKLIST_ITEMS.filter((item) => Boolean(checklist[item.key])).length;
+  const percentage = Math.round((completedCount / CHECKLIST_ITEMS.length) * 100);
 
-  const status =
-    completed === 7
-      ? "Ready for Review"
-      : completed >= 4
-      ? "Needs Attention"
-      : "In Progress";
-
-  function toggleCheck(id) {
-    setChecks((previous) =>
-      previous.map((item) =>
-        item.id === id
-          ? { ...item, done: !item.done }
-          : item
-      )
-    );
-  }
+  const isApproved = status === "Approved for Sharing";
+  const canSignOff = completedCount >= 6 && !checklist.leaderApprovalRecorded;
 
   return (
     <Card className="border-[#E1EAE5] bg-white shadow-sm">
@@ -59,15 +54,17 @@ export default function ReadinessPanel() {
             </CardTitle>
 
             <CardDescription className="mt-1">
-              Seven-point project handover checklist
+              7-Point Deterministic Readiness Checklist
             </CardDescription>
           </div>
 
           <span
             className={`rounded-full px-3 py-1 text-xs font-semibold ${
-              completed === 7
-                ? "bg-green-50 text-green-700"
-                : "bg-amber-50 text-amber-700"
+              isApproved
+                ? "bg-green-100 text-green-800"
+                : status === "Ready for Review"
+                ? "bg-blue-100 text-blue-800"
+                : "bg-amber-100 text-amber-800"
             }`}
           >
             {status}
@@ -79,74 +76,105 @@ export default function ReadinessPanel() {
         <div className="mb-6">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-sm font-medium text-[#4A5F5B]">
-              Completion progress
+              Deterministic verification progress
             </span>
 
             <span className="text-sm font-bold text-[#001E2B]">
-              {completed}/7 ({percentage}%)
+              {completedCount}/7 ({percentage}%)
             </span>
           </div>
 
           <div className="h-2.5 overflow-hidden rounded-full bg-[#E8F0EB]">
             <div
-              className="h-full rounded-full bg-[#159B59] transition-all duration-300"
+              className={`h-full rounded-full transition-all duration-300 ${
+                isApproved ? "bg-[#159B59]" : percentage >= 70 ? "bg-blue-600" : "bg-amber-500"
+              }`}
               style={{ width: `${percentage}%` }}
             />
           </div>
         </div>
 
-        <div className="space-y-3">
-          {checks.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => toggleCheck(item.id)}
-              className="flex w-full items-center gap-3 rounded-lg border border-transparent p-2 text-left transition hover:border-[#DCE9E3] hover:bg-[#F5F9F6]"
-            >
-              {item.done ? (
-                <CheckCircle2
-                  size={20}
-                  className="shrink-0 text-[#159B59]"
-                />
-              ) : (
-                <Circle
-                  size={20}
-                  className="shrink-0 text-[#A0ACA6]"
-                />
-              )}
-
-              <span
-                className={`flex-1 text-sm ${
-                  item.done
-                    ? "text-[#71817B]"
-                    : "font-medium text-[#001E2B]"
-                }`}
+        {/* Read-only checklist items: NO client-side clicking to ensure deterministic verification */}
+        <div className="space-y-2.5">
+          {CHECKLIST_ITEMS.map((item) => {
+            const isDone = Boolean(checklist[item.key]);
+            return (
+              <div
+                key={item.key}
+                className="flex items-center gap-3 rounded-lg border border-[#F0F4F2] bg-[#FAFCFA] p-2.5 text-left"
               >
-                {item.title}
-              </span>
+                {isDone ? (
+                  <CheckCircle2 size={18} className="shrink-0 text-[#159B59]" />
+                ) : (
+                  <Circle size={18} className="shrink-0 text-[#A0ACA6]" />
+                )}
 
-              {item.done && (
-                <span className="text-xs text-[#159B59]">
-                  Done
+                <span
+                  className={`flex-1 text-xs sm:text-sm ${
+                    isDone ? "text-[#2B3A36] font-medium" : "text-[#71817B]"
+                  }`}
+                >
+                  {item.title}
                 </span>
-              )}
-            </button>
-          ))}
+
+                <span
+                  className={`text-xs font-semibold ${
+                    isDone ? "text-[#159B59]" : "text-[#8E9B95]"
+                  }`}
+                >
+                  {isDone ? "Verified" : "Pending"}
+                </span>
+              </div>
+            );
+          })}
         </div>
 
-        {completed < 7 && (
-          <div className="mt-5 flex gap-2 rounded-lg bg-amber-50 p-3">
-            <AlertCircle
-              size={18}
-              className="shrink-0 text-amber-600"
-            />
-
+        {/* Informational banner */}
+        {!isApproved && (
+          <div className="mt-4 flex gap-2 rounded-lg bg-amber-50 p-3">
+            <AlertCircle size={18} className="shrink-0 text-amber-600" />
             <p className="text-xs leading-5 text-amber-800">
-              Complete the remaining checks before submitting
-              the handover for approval.
+              Checklist criteria are verified deterministically by the Analytics Service.
+              Re-evaluating recalculates scores directly from current MongoDB evidence.
             </p>
           </div>
         )}
+
+        {isApproved && (
+          <div className="mt-4 flex gap-2 rounded-lg bg-green-50 p-3">
+            <Award size={18} className="shrink-0 text-green-600" />
+            <p className="text-xs leading-5 text-green-800">
+              Project is signed off and approved for sharing with incoming engineers.
+            </p>
+          </div>
+        )}
+
+        {/* Action Buttons */}
+        <div className="mt-5 flex flex-wrap gap-2">
+          {onEvaluate && (
+            <button
+              type="button"
+              onClick={onEvaluate}
+              disabled={evaluating}
+              className="flex items-center gap-2 rounded-lg border border-[#DCE9E3] bg-white px-3.5 py-2 text-xs font-semibold text-[#001E2B] transition hover:bg-[#F5F9F6] disabled:opacity-50"
+            >
+              <RefreshCw size={14} className={evaluating ? "animate-spin" : ""} />
+              {evaluating ? "Evaluating..." : "Evaluate Readiness"}
+            </button>
+          )}
+
+          {isLeader && onSignOff && canSignOff && (
+            <button
+              type="button"
+              onClick={onSignOff}
+              disabled={signingOff}
+              className="flex items-center gap-2 rounded-lg bg-[#001E2B] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#023D35] disabled:opacity-50"
+            >
+              <Award size={14} />
+              {signingOff ? "Signing Off..." : "Sign-Off Handover"}
+            </button>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

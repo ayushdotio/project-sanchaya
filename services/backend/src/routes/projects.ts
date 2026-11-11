@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import {
   authenticateToken,
+  requireProjectMembership,
   requireRoles,
 } from "../middlewares/authMiddleware.js";
 import { validateBody } from "../middlewares/validate.js";
@@ -75,6 +76,7 @@ router.get(
 router.get(
   "/:projectId",
   authenticateToken,
+  requireProjectMembership,
   asyncHandler(fetchProjectController),
 );
 
@@ -94,6 +96,7 @@ router.post(
   "/:projectId/members",
   authenticateToken,
   requireRoles(["leader"]),
+  requireProjectMembership,
   validateBody(assignMembersSchema),
   asyncHandler(fetchMembersController),
 );

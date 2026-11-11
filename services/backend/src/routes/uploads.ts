@@ -2,6 +2,7 @@ import { Router } from "express";
 import crypto from "crypto";
 import {
   authenticateToken,
+  requireProjectMembership,
   requireRoles,
 } from "../middlewares/authMiddleware.js";
 import { upload } from "../middlewares/uploadMiddleware.js";
@@ -59,6 +60,7 @@ router.get(
   ["/:projectId/uploads/notes", "/:projectId/documents"],
   authenticateToken,
   requireRoles(["leader", "outgoing"]),
+  requireProjectMembership,
   asyncHandler(listProjectDocsController),
 );
 
@@ -72,6 +74,7 @@ router.get(
   ["/:projectId/uploads/notes/:fileId", "/:projectId/documents/:fileId"],
   authenticateToken,
   requireRoles(["leader", "outgoing"]),
+  requireProjectMembership,
   asyncHandler(fetchProjectDocController),
 );
 
@@ -111,6 +114,7 @@ router.get(
   "/:projectId/sources",
   authenticateToken,
   requireRoles(["leader", "outgoing"]),
+  requireProjectMembership,
   asyncHandler(getSourcesController),
 );
 
@@ -127,6 +131,7 @@ router.get(
   "/:projectId/sources/:sourceId",
   authenticateToken,
   requireRoles(["leader", "outgoing"]),
+  requireProjectMembership,
   asyncHandler(fetchSourceDetailsController),
 );
 

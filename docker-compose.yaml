@@ -4,13 +4,19 @@ services:
     container_name: sanchaya-mongo
     restart: unless-stopped
     ports:
-      - "127.0.0.1:27017:27017"
+      - "127.0.0.1:${MONGO_HOST_PORT:-27018}:27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
       MONGO_INITDB_DATABASE: sanchaya
     volumes:
       - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - sanchaya-network
 
@@ -21,17 +27,26 @@ services:
     container_name: sanchaya-backend
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      - "${BACKEND_PORT:-5000}:${BACKEND_PORT:-5000}"
     environment:
-      - NODE_ENV=development
-      - PORT=5000
-      - MONGO_URI=${MONGO_URI}
+      - NODE_ENV=${NODE_ENV:-development}
+      - PORT=${BACKEND_PORT:-5000}
+      - MONGO_URI=${DOCKER_MONGO_URI:-${MONGO_URI}}
       - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-3h}
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:5173}
+      - GITHUB_GLOBAL_PAT=${GITHUB_GLOBAL_PAT:-}
+      - IMAGEKIT_PUBLIC_KEY=${IMAGEKIT_PUBLIC_KEY:-}
+      - IMAGEKIT_PRIVATE_KEY=${IMAGEKIT_PRIVATE_KEY:-}
+      - IMAGEKIT_URL_ENDPOINT=${IMAGEKIT_URL_ENDPOINT:-}
       - AI_SERVICE_URL=http://ai-engine:8001
       - ANALYTICS_SERVICE_URL=http://analytics-service:8002
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./services/backend:/app
-      - backend-node-modules:/app/node_modules
+      - /app/node_modules
     depends_on:
       - mongo
     networks:
@@ -45,44 +60,82 @@ services:
     ports:
       - "5173:5173"
     environment:
-      - VITE_API_URL=http://localhost:5000
+      - VITE_API_URL=http://localhost:${BACKEND_PORT:-5000}
     volumes:
       - ./services/frontend:/app
-      - frontend-node-modules:/app/node_modules
+      - /app/node_modules
     depends_on:
       - backend
     networks:
       - sanchaya-network
 
-  # Stubs for teammates so your backend pythonBridge works out of the box
+  # Stage 2-4 AI Extraction, Deterministic Evidence Verification & Gap Question Microservice
   ai-engine:
     build:
       context: ./services/ai-engine
     container_name: sanchaya-ai-engine
     restart: unless-stopped
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8001:8001"
+    environment:
+      - MONGO_URI=${DOCKER_MONGO_URI:-${MONGO_URI}}
+      - DATABASE_NAME=${DATABASE_NAME:-sanchaya}
+      - LLM_PROVIDER=${LLM_PROVIDER:-auto}
+      - LLM_MODEL=${LLM_MODEL:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-google/gemini-2.5-flash}
+      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-}
+      - FRESHNESS_MAX_AGE_DAYS=${FRESHNESS_MAX_AGE_DAYS:-90}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./services/ai-engine:/app
+    depends_on:
+      - mongo
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     networks:
       - sanchaya-network
 
+  # Stage 2-5 Contribution Risk Map, Readiness Checklist & ReportLab PDF Microservice
   analytics-service:
     build:
       context: ./services/analytics-service
     container_name: sanchaya-analytics-service
     restart: unless-stopped
     ports:
-      - "8002:8002"
+      - "127.0.0.1:8002:8002"
+    environment:
+      - MONGO_URI=${DOCKER_MONGO_URI:-${MONGO_URI}}
+      - DATABASE_NAME=${DATABASE_NAME:-sanchaya}
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./services/analytics-service:/app
+    depends_on:
+      - mongo
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     networks:
       - sanchaya-network
 
 volumes:
   mongo_data:
-  backend-node-modules:
-  frontend-node-modules:
 
 networks:
   sanchaya-network:

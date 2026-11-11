@@ -7,9 +7,12 @@ Commit record: {sha, author, email, timestamp, files:[{path, additions, deletion
 Task record  : {id, title, assignee, status, blocker}
 Wording is always "potential knowledge-risk area": never a performance score.
 """
+
+from __future__ import annotations
+
 import re
 from collections import defaultdict
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.common import parse_ts
 
@@ -100,6 +103,8 @@ def _score(per_author, cfg, label_key, label):
 
 
 def _group(commits, cfg, alias_map, keyfn, as_of):
+    if as_of is None:
+        return {}
     window_start = as_of - timedelta(days=cfg["window_days"])
     groups = defaultdict(lambda: defaultdict(lambda: {"commits": 0, "lines": 0, "recent": 0}))
     for c in commits:
@@ -119,19 +124,98 @@ def _group(commits, cfg, alias_map, keyfn, as_of):
     return groups
 
 
+def _task_contributors(task, alias_map):
+    people = []
+    if task.get("assignee"):
+        people.append(identity_key(task["assignee"], "", alias_map))
+    for extra in task.get("contributors") or []:
+        if extra:
+            k = identity_key(extra, "", alias_map)
+            if k not in people:
+                people.append(k)
+    for field in ("second_contributor", "reviewer"):
+        if task.get(field):
+            k = identity_key(task[field], "", alias_map)
+            if k not in people:
+                people.append(k)
+    return people
+
+
+def _analyze_task_groups(tasks, cfg, alias_map):
+    grouped = defaultdict(list)
+    for t in tasks:
+        group_name = (
+            t.get("group")
+            or t.get("module")
+            or t.get("unit")
+            or t.get("area")
+            or t.get("category")
+            or "general"
+        )
+        grouped[str(group_name)].append(t)
+
+    results = []
+    for group_name, group_tasks in grouped.items():
+        total = len(group_tasks)
+        open_or_blocked = [t for t in group_tasks if t.get("status") in ("open", "blocked")]
+        counts = defaultdict(int)
+        for t in group_tasks:
+            if t.get("assignee"):
+                counts[identity_key(t["assignee"], "", alias_map)] += 1
+        assigned_total = sum(counts.values())
+        if counts:
+            ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+            top_owner, top_count = ranked[0]
+            share = top_count / assigned_total if assigned_total else 0.0
+        else:
+            ranked = []
+            top_owner, share = None, 0.0
+
+        if total < 2 or assigned_total == 0:
+            level = "Insufficient data"
+        elif share >= cfg["high_share"]:
+            level = "High"
+        elif share >= cfg["medium_share"]:
+            level = "Medium"
+        else:
+            level = "Low"
+
+        results.append(
+            {
+                "task_group": group_name,
+                "level": level,
+                "top_contributor": top_owner,
+                "top_task_share": round(share, 3),
+                "total_tasks": total,
+                "open_or_blocked": len(open_or_blocked),
+                "contributor_tasks": {n: c for n, c in ranked},
+                "wording": "potential knowledge-risk area" if level in ("High", "Medium") else "",
+            }
+        )
+
+    results.sort(key=lambda r: (LEVEL_ORDER[r["level"]], -r["top_task_share"], -r["total_tasks"], r["task_group"]))
+    return results
+
+
 def analyze(commits, tasks=None, departing_member=None, alias_map=None, as_of=None, **overrides):
     cfg = {**DEFAULTS, **overrides}
     commits = list(commits or [])
     tasks = list(tasks or [])
     if as_of is None:
         as_of = max(
-    (
-        parse_ts(c["timestamp"])
-        for c in commits
-        if not is_bot(c.get("author", ""), c.get("email", ""))
-    ),
-    default=None,
-)
+            (
+                parse_ts(c["timestamp"])
+                for c in commits
+                if not is_bot(c.get("author", ""), c.get("email", ""))
+            ),
+            default=None,
+        )
+        # Fallback when commits only contain bot commits (prevents None - timedelta TypeError)
+        if as_of is None and commits:
+            as_of = max(
+                (parse_ts(c["timestamp"]) for c in commits if c.get("timestamp")),
+                default=datetime.now(timezone.utc),
+            )
     else:
         as_of = parse_ts(as_of)
 
@@ -143,14 +227,21 @@ def analyze(commits, tasks=None, departing_member=None, alias_map=None, as_of=No
         ug = _group(commits, cfg, alias_map, lambda p: [unit_of(p, cfg["unit_depth"])], as_of)
         units = [_score(per, cfg, "unit", name) for name, per in ug.items()]
         fg = _group(commits, cfg, alias_map, lambda p: [p], as_of)
-        hotspots = [_score(per, cfg, "file", name) for name, per in fg.items()]
-        hotspots = [h for h in hotspots if h["level"] == "High"]
+        all_files = [_score(per, cfg, "file", name) for name, per in fg.items()]
+        hotspots = [h for h in all_files if h["level"] in ("High", "Medium")]
     order = lambda r: (LEVEL_ORDER[r["level"]], -r["top_commit_share"], -r["total_changes"])
     units.sort(key=order)
     hotspots.sort(key=order)
 
     departing = identity_key(departing_member, "", alias_map) if departing_member else None
     open_tasks = [t for t in tasks if t.get("status") in ("open", "blocked")]
+    single_contributor_tasks = [
+        t["id"]
+        for t in open_tasks
+        if len(_task_contributors(t, alias_map)) <= 1 and not t.get("reviewer_signoff")
+    ]
+    task_groups = _analyze_task_groups(tasks, cfg, alias_map)
+
     task_risk = {
         "open_or_blocked": len(open_tasks),
         "unowned": [t["id"] for t in open_tasks if not t.get("assignee")],
@@ -159,6 +250,7 @@ def analyze(commits, tasks=None, departing_member=None, alias_map=None, as_of=No
             t["id"] for t in open_tasks
             if departing and t.get("assignee") and identity_key(t["assignee"], "", alias_map) == departing
         ],
+        "single_contributor_tasks": single_contributor_tasks,
     }
     departing_units = [
         u["unit"] for u in units
@@ -171,6 +263,8 @@ def analyze(commits, tasks=None, departing_member=None, alias_map=None, as_of=No
         "departing_member": departing,
         "units": units,
         "hotspot_files": hotspots[:10],
+        "total_hotspots": len(hotspots),
+        "task_groups": task_groups,
         "task_risk": task_risk,
         "departing_member_risk_units": departing_units,
         "disclaimer": "Potential knowledge-risk areas only. Not a measure of individual performance.",

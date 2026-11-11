@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import {
   authenticateToken,
+  requireProjectMembership,
   requireRoles,
 } from "../middlewares/authMiddleware.js";
 import { validateBody } from "../middlewares/validate.js";
@@ -35,6 +36,7 @@ router.get(
   "/:projectId/gaps",
   authenticateToken,
   requireRoles(["leader", "outgoing"]),
+  requireProjectMembership,
   asyncHandler(listUnresolvedGapsController),
 );
 
@@ -52,6 +54,7 @@ router.get(
   "/:projectId/gap-questions",
   authenticateToken,
   requireRoles(["leader", "outgoing"]),
+  requireProjectMembership,
   asyncHandler(gapQuestionsController),
 );
 
@@ -74,6 +77,7 @@ router.post(
   "/:projectId/gap-questions/:questionId/answer",
   authenticateToken,
   requireRoles(["outgoing"]),
+  requireProjectMembership,
   validateBody(answerSchema),
   asyncHandler(answerController),
 );
