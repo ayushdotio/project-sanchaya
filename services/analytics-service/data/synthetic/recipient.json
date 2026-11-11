@@ -1,0 +1,10 @@
+{
+  "user_id": "u-incoming-01",
+  "name": "Kabir Deshmukh",
+  "role": "incoming",
+  "scope": [
+    "project",
+    "tasks",
+    "decisions"
+  ]
+}

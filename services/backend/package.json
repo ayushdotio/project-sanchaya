@@ -2,18 +2,19 @@
   "name": "backend",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "dist/server.js",
   "type": "module",
   "scripts": {
     "dev": "tsx watch server.ts",
     "build": "rimraf dist && tsc",
     "start": "node dist/server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "tsx --test tests/**/*.test.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@imagekit/nodejs": "^7.14.0",
     "@octokit/rest": "^22.0.1",
     "axios": "^1.21.0",
     "bcrypt": "^6.0.0",
