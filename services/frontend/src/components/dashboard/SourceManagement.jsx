@@ -1,19 +1,15 @@
 import { useEffect, useState } from "react";
 import {
-  GitBranch,
-  FileText,
-  ExternalLink,
   FolderOpen,
   X,
   ShieldCheck,
   Eye,
-  Table,
   Upload,
   RefreshCw,
 } from "lucide-react";
 
-import { client } from "@/api/client";
 import { getSources } from "@/api/findingsApi";
+import { getSourceRecordById } from "@/api/sourcesApi";
 
 /**
  * Parse CSV preview text into rows of cells.
@@ -60,41 +56,52 @@ function parseCSV(content) {
 export default function SourceManagement({ projectId = "", onUploadSources = null }) {
   const [sources, setSources] = useState([]);
   const [filterType, setFilterType] = useState("all");
-  const [loading, setLoading] = useState(false);
+  const [loadedKey, setLoadedKey] = useState("");
+  const [refreshTick, setRefreshTick] = useState(0);
   const [error, setError] = useState("");
   const [selectedSource, setSelectedSource] = useState(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
 
-  async function loadSources() {
-    if (!projectId) {
-      setSources([]);
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      const data = await getSources(projectId, filterType);
-      setSources(data);
-    } catch (err) {
-      console.error("Failed to load sources:", err);
-      setError(err.message || "Could not load project sources.");
-    } finally {
-      setLoading(false);
-    }
-  }
+  const currentKey = projectId ? `${projectId}:${filterType}:${refreshTick}` : "";
+  const loading = Boolean(projectId) && loadedKey !== currentKey;
 
   useEffect(() => {
-    loadSources();
-  }, [projectId, filterType]);
+    let active = true;
+
+    if (!projectId) {
+      return () => {
+        active = false;
+      };
+    }
+
+    const requestKey = `${projectId}:${filterType}:${refreshTick}`;
+    getSources(projectId, filterType)
+      .then((data) => {
+        if (!active) return;
+        setError("");
+        setSources(Array.isArray(data) ? data : []);
+      })
+      .catch((err) => {
+        console.error("Failed to load sources:", err);
+        if (active) {
+          setError(err.message || "Could not load project sources.");
+        }
+      })
+      .finally(() => {
+        if (active) setLoadedKey(requestKey);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [projectId, filterType, refreshTick]);
 
   async function handleInspectSource(src) {
     if (!projectId || !src?.id) return;
     setDetailsLoading(true);
     try {
-      const result = await client.get(
-        `/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(src.id)}`
-      );
-      setSelectedSource(result.data || src);
+      const detail = await getSourceRecordById(projectId, src.id);
+      setSelectedSource(detail || src);
     } catch {
       // Fallback to basic source metadata if detailed endpoint fails
       setSelectedSource(src);
@@ -158,8 +165,8 @@ export default function SourceManagement({ projectId = "", onUploadSources = nul
 
             <button
               type="button"
-              onClick={loadSources}
-              disabled={loading}
+              onClick={() => setRefreshTick((t) => t + 1)}
+              disabled={loading || !projectId}
               className="flex items-center gap-1.5 rounded-lg border border-[#DCE9E3] px-3 py-1.5 text-xs font-semibold text-[#001E2B] hover:bg-[#F5F9F6] disabled:opacity-50"
             >
               <RefreshCw size={13} className={loading ? "animate-spin" : ""} />

@@ -93,6 +93,10 @@ const handoverReportController = async (
         githubRepo: project.githubRepo,
         readinessStatus: project.readinessStatus,
         approvedAt: project.approvedAt,
+        approvedSnapshotHash: project.approvedSnapshotHash ?? null,
+        recipientScope: Array.isArray(project.recipientScope)
+          ? project.recipientScope
+          : ["project"],
       },
       findings,
       gapAnswers,
@@ -110,9 +114,12 @@ const exportPDFController = async (
   const project = await verifyHandoverAccess(req, res, projectId);
   if (!project) return;
 
+  const query = ((req as any).validatedQuery || req.query || {}) as {
+    draft?: string;
+  };
   const allowDraft =
     req.user!.role === "leader" &&
-    (req.query.draft === "true" || project.readinessStatus !== "Approved for Sharing");
+    (query.draft === "true" || project.readinessStatus !== "Approved for Sharing");
 
   const pdfStreamResponse = await pythonBridge.getPdfStream(projectId, {
     allowDraft,
@@ -123,6 +130,12 @@ const exportPDFController = async (
     "Content-Disposition",
     `attachment; filename="sanchaya-handover-${projectId}.pdf"`,
   );
+
+  res.on("close", () => {
+    if (!res.writableEnded && typeof pdfStreamResponse.data?.destroy === "function") {
+      pdfStreamResponse.data.destroy();
+    }
+  });
 
   pdfStreamResponse.data.on("error", (streamErr: Error) => {
     console.error("[Handover PDF Stream Error]", streamErr.message);
@@ -153,15 +166,39 @@ const handoverAcknowledgementController = async (
   }).sort({ version: -1 });
   const currentVersion = latestSnapshot?.version ?? 1;
 
+  // Idempotent guard: prevent duplicate receipts from the same user for the same snapshot version
+  const existingReceipt = await HandoverHistory.findOne({
+    projectId: project._id,
+    version: currentVersion,
+    acknowledgedBy: req.user!.userId as any,
+  });
+  if (existingReceipt) {
+    res.status(200).json({
+      success: true,
+      message: "Handover receipt already acknowledged for this version.",
+      data: existingReceipt,
+    });
+    return;
+  }
+
+  const snapshotPayload: Record<string, any> = {
+    projectName: project.name,
+    approvedAt: project.approvedAt,
+    readinessStatus: project.readinessStatus,
+    snapshotHash:
+      project.approvedSnapshotHash ??
+      latestSnapshot?.approvedSnapshot?.snapshotHash ??
+      null,
+  };
+  if (latestSnapshot?.approvedSnapshot?.approvedFindingsCount !== undefined) {
+    snapshotPayload.approvedFindingsCount =
+      latestSnapshot.approvedSnapshot.approvedFindingsCount;
+  }
+
   const receipt = await HandoverHistory.create({
     projectId: project._id,
     version: currentVersion,
-    approvedSnapshot: {
-      projectName: project.name,
-      approvedAt: project.approvedAt,
-      readinessStatus: project.readinessStatus,
-      snapshotHash: project.approvedSnapshotHash ?? null,
-    },
+    approvedSnapshot: snapshotPayload,
     acknowledgedBy: req.user!.userId as any,
     acknowledgedAt: new Date(),
   });
@@ -188,7 +225,7 @@ const handoverHistoryController = async (
 
   const history = await HandoverHistory.find({ projectId })
     .populate("acknowledgedBy", "name email")
-    .sort({ createdAt: -1 });
+    .sort({ version: -1, createdAt: -1 });
 
   res.status(200).json({
     success: true,

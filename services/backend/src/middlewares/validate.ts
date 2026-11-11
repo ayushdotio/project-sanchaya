@@ -34,7 +34,13 @@ export const validateQuery = (schema: ZodSchema) => {
       });
       return;
     }
-    req.query = result.data as any;
+    (req as any).validatedQuery = result.data;
+    Object.defineProperty(req, "query", {
+      value: result.data,
+      configurable: true,
+      enumerable: true,
+      writable: true,
+    });
     next();
   };
 };

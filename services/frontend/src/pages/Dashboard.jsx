@@ -1,5 +1,5 @@
 
-import { useEffect, useState, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getDashboardData } from "@/services/dashboardApi";
 import {
   getProjects,
@@ -11,17 +11,20 @@ import { reconstructProject, getProjectRiskMap } from "@/api/reconstructionApi";
 import { getFindings, scanFreshness } from "@/api/findingsApi";
 import {
   getUnresolvedGaps,
+  getGapQuestions,
   getReadiness,
   evaluateReadiness,
   signOffReadiness,
 } from "@/api/gapsApi";
 import { getProjectSources } from "@/api/sourcesApi";
-import { getHandoverHistory } from "@/api/handoverApi";
+import { getHandoverHistory, downloadHandoverPdf } from "@/api/handoverApi";
 import { updateUserRole } from "@/api/usersApi";
 
 import StatsCard from "@/components/dashboard/StatsCard";
 import FindingChart from "@/components/dashboard/FindingChart";
 import ContributionChart from "@/components/dashboard/ContributionChart";
+import RiskMapPanel from "@/components/dashboard/RiskMapPanel";
+import Stage2ReconstructionPanel from "@/components/dashboard/Stage2ReconstructionPanel";
 import RecentActivity from "@/components/dashboard/RecentActivity";
 import ReadinessPanel from "@/components/dashboard/ReadinessPanel";
 import KnowledgeGapRadar from "@/components/dashboard/KnowledgeGapRadar";
@@ -48,6 +51,8 @@ import {
   Loader2,
   ArrowLeft,
   Users,
+  Download,
+  FileText,
 } from "lucide-react";
 
 export default function Dashboard({
@@ -74,11 +79,15 @@ export default function Dashboard({
   const [projectError, setProjectError] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
 
-  // Selected project details
+  // Active & selected project state
+  const [activeOverviewProjectId, setActiveOverviewProjectId] = useState("");
   const [selectedProject, setSelectedProject] = useState(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState("");
   const [reconstructing, setReconstructing] = useState(false);
+  const [reconstructSourceTypes, setReconstructSourceTypes] = useState([]);
+  const [selectedSourceIds, setSelectedSourceIds] = useState([]);
+  const [reconstructionResult, setReconstructionResult] = useState(null);
   const [reconstructionMessage, setReconstructionMessage] = useState("");
   const [reconstructionError, setReconstructionError] = useState("");
   const [riskMapLoading, setRiskMapLoading] = useState(false);
@@ -90,9 +99,15 @@ export default function Dashboard({
   const [projectSources, setProjectSources] = useState([]);
   const [historyData, setHistoryData] = useState([]);
   const [readinessData, setReadinessData] = useState(null);
+  const [readinessEvaluation, setReadinessEvaluation] = useState(null);
+  const [readinessActionError, setReadinessActionError] = useState("");
+  const [readinessActionMessage, setReadinessActionMessage] = useState("");
   const [gapsData, setGapsData] = useState(null);
+  const [gapQuestions, setGapQuestions] = useState([]);
   const [evaluatingReadiness, setEvaluatingReadiness] = useState(false);
   const [signingOff, setSigningOff] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [pdfExportError, setPdfExportError] = useState("");
   const [freshnessScanning, setFreshnessScanning] = useState(false);
   const [freshnessReport, setFreshnessReport] = useState(null);
   const [freshnessError, setFreshnessError] = useState("");
@@ -104,8 +119,20 @@ export default function Dashboard({
   const [memberActionError, setMemberActionError] = useState("");
   const [updatingRoleId, setUpdatingRoleId] = useState("");
 
+  const activeOverviewProject = useMemo(() => {
+    if (!projects || projects.length === 0) return null;
+    if (activeOverviewProjectId) {
+      const match = projects.find((p) => (p._id || p.id) === activeOverviewProjectId);
+      if (match) return match;
+    }
+    return projects[0];
+  }, [projects, activeOverviewProjectId]);
+
+  const activeProject = selectedProject || activeOverviewProject;
+  const activeProjectId = activeProject?._id || activeProject?.id || "";
+
   const computedStats = useMemo(() => {
-    if (projectFindings && projectFindings.length > 0) {
+    if (activeProjectId) {
       const counts = { total: projectFindings.length, supported: 0, needsReview: 0, conflicting: 0, unknown: 0 };
       projectFindings.forEach((f) => {
         const s = (f.status || f.verification_status || "").toLowerCase();
@@ -117,7 +144,7 @@ export default function Dashboard({
       return counts;
     }
     return data?.stats || { total: 0, supported: 0, needsReview: 0, conflicting: 0, unknown: 0 };
-  }, [projectFindings, data]);
+  }, [activeProjectId, projectFindings, data]);
 
   const stats = [
     {
@@ -146,30 +173,135 @@ export default function Dashboard({
     },
   ];
 
-  async function loadProjectSubresources(projectId) {
+  function resetStage2Feedback() {
+    setReconstructionMessage("");
+    setReconstructionError("");
+    setReconstructionResult(null);
+    setRiskMapError("");
+    setFreshnessReport(null);
+    setFreshnessError("");
+    setReadinessEvaluation(null);
+    setReadinessActionError("");
+    setReadinessActionMessage("");
+    setPdfExportError("");
+  }
+
+  const activeOverviewProjectIdRef = useRef("");
+
+  const loadProjectSubresources = useCallback(async (projectId) => {
     if (!projectId) return;
     try {
-      const [findings, riskMap, readiness, gaps, sources, history] = await Promise.all([
-        getFindings(projectId).catch(() => []),
-        getProjectRiskMap(projectId).catch(() => null),
-        getReadiness(projectId).catch(() => null),
-        getUnresolvedGaps(projectId).catch(() => null),
-        getProjectSources(projectId).catch(() => []),
-        getHandoverHistory(projectId).catch(() => []),
+      const [
+        findingsRes,
+        riskMapRes,
+        readinessRes,
+        gapsRes,
+        questionsRes,
+        sourcesRes,
+        historyRes,
+      ] = await Promise.allSettled([
+        getFindings(projectId),
+        getProjectRiskMap(projectId),
+        getReadiness(projectId),
+        getUnresolvedGaps(projectId),
+        getGapQuestions(projectId),
+        getProjectSources(projectId),
+        getHandoverHistory(projectId),
       ]);
-      setProjectFindings(findings);
-      if (sources) setProjectSources(sources);
-      if (history) setHistoryData(history);
-      if (riskMap) setRiskMapData(riskMap);
-      if (readiness) setReadinessData(readiness);
-      if (gaps) setGapsData(gaps);
+
+      setProjectFindings(
+        findingsRes.status === "fulfilled" && Array.isArray(findingsRes.value)
+          ? findingsRes.value
+          : []
+      );
+      setProjectSources(
+        sourcesRes.status === "fulfilled" && Array.isArray(sourcesRes.value)
+          ? sourcesRes.value
+          : []
+      );
+      setHistoryData(
+        historyRes.status === "fulfilled" && Array.isArray(historyRes.value)
+          ? historyRes.value
+          : []
+      );
+
+      if (riskMapRes.status === "fulfilled") {
+        setRiskMapData(riskMapRes.value || null);
+        setRiskMapError("");
+      } else {
+        setRiskMapData(null);
+        setRiskMapError(
+          riskMapRes.reason?.message || "Unable to load the risk map."
+        );
+      }
+
+      setReadinessData(
+        readinessRes.status === "fulfilled" ? readinessRes.value || null : null
+      );
+      setGapsData(
+        gapsRes.status === "fulfilled" ? gapsRes.value || null : null
+      );
+      setGapQuestions(
+        questionsRes.status === "fulfilled" && Array.isArray(questionsRes.value)
+          ? questionsRes.value
+          : []
+      );
     } catch (err) {
       console.warn("Could not load all project subresources:", err);
+    }
+  }, []);
+
+  async function handleSelectOverviewProject(projectId) {
+    activeOverviewProjectIdRef.current = projectId;
+    setActiveOverviewProjectId(projectId);
+    setSelectedSourceIds([]);
+    resetStage2Feedback();
+    setRiskMapData(null);
+    if (projectId) {
+      await loadProjectSubresources(projectId);
+    }
+  }
+
+  function handleToggleSourceType(type) {
+    setReconstructSourceTypes((prev) =>
+      prev.includes(type) ? prev.filter((item) => item !== type) : [...prev, type]
+    );
+    setSelectedSourceIds([]);
+  }
+
+  function handleToggleSourceId(sourceId) {
+    setSelectedSourceIds((prev) =>
+      prev.includes(sourceId)
+        ? prev.filter((item) => item !== sourceId)
+        : [...prev, sourceId]
+    );
+  }
+
+  async function handleExportHandoverPdf() {
+    const projectId = activeProjectId;
+    if (!projectId) return;
+    setExportingPdf(true);
+    setPdfExportError("");
+    try {
+      const currentStatus =
+        readinessData?.readinessStatus || activeProject?.readinessStatus;
+      const isDraft = currentStatus !== "Approved for Sharing";
+      await downloadHandoverPdf(
+        projectId,
+        `sanchaya-handover-${activeProject?.name || projectId}.pdf`,
+        { draft: isDraft }
+      );
+      await loadProjectSubresources(projectId);
+    } catch (err) {
+      console.error("PDF export failed:", err);
+      setPdfExportError(err.message || "Failed to export handover PDF.");
+    } finally {
+      setExportingPdf(false);
     }
   }
 
   async function handleScanFreshness() {
-    const projectId = selectedProject?._id || selectedProject?.id;
+    const projectId = activeProjectId;
     if (!projectId) return;
     setFreshnessScanning(true);
     setFreshnessError("");
@@ -244,36 +376,70 @@ export default function Dashboard({
   }
 
   async function handleEvaluateReadiness() {
-    const projectId = selectedProject?._id || selectedProject?.id;
+    const projectId = activeProjectId;
     if (!projectId) return;
     setEvaluatingReadiness(true);
+    setReadinessActionError("");
+    setReadinessActionMessage("");
     try {
-      await evaluateReadiness(projectId);
+      const evaluated = await evaluateReadiness(projectId);
+      setReadinessEvaluation(evaluated || null);
+      if (evaluated?.checklist || evaluated?.readinessStatus) {
+        setReadinessData((prev) => ({
+          ...(prev || {}),
+          ...(evaluated.readinessStatus ? { readinessStatus: evaluated.readinessStatus } : {}),
+          ...(evaluated.checklist ? { checklist: evaluated.checklist } : {}),
+        }));
+      }
+      setReadinessActionMessage(
+        `Readiness evaluated: ${evaluated?.readinessStatus || "updated"}.`
+      );
       await loadProjectSubresources(projectId);
     } catch (err) {
       console.error("Evaluate readiness failed:", err);
-      alert(err.message || "Failed to evaluate readiness.");
+      setReadinessActionError(err.message || "Failed to evaluate readiness.");
     } finally {
       setEvaluatingReadiness(false);
     }
   }
 
-  async function handleSignOff() {
-    const projectId = selectedProject?._id || selectedProject?.id;
+  async function handleSignOff(options = {}) {
+    const projectId = activeProjectId;
     if (!projectId) return;
     setSigningOff(true);
+    setReadinessActionError("");
+    setReadinessActionMessage("");
     try {
-      const updated = await signOffReadiness(projectId);
+      const updated = await signOffReadiness(projectId, options);
       if (updated) {
-        setSelectedProject((prev) => ({
-          ...prev,
-          readinessStatus: "Approved for Sharing",
-        }));
+        if (selectedProject) {
+          setSelectedProject((prev) =>
+            prev ? { ...prev, readinessStatus: "Approved for Sharing" } : prev
+          );
+        }
+        setProjects((prev) =>
+          prev.map((p) =>
+            (p._id || p.id) === projectId
+              ? { ...p, readinessStatus: "Approved for Sharing" }
+              : p
+          )
+        );
+        setReadinessActionMessage(
+          `Handover signed off and Approved for Sharing${
+            updated.version ? ` (Snapshot v${updated.version})` : ""
+          }.`
+        );
       }
       await loadProjectSubresources(projectId);
     } catch (err) {
       console.error("Sign-off failed:", err);
-      alert(err.message || "Failed to sign-off readiness.");
+      const failingList = Array.isArray(err?.data?.failingCriteria)
+        ? ` Failing criteria: ${err.data.failingCriteria.join(", ")}.`
+        : "";
+      setReadinessActionError(
+        `${err.message || "Failed to sign-off readiness."}${failingList}`
+      );
+      await loadProjectSubresources(projectId);
     } finally {
       setSigningOff(false);
     }
@@ -290,6 +456,11 @@ export default function Dashboard({
     setDetailsLoading(true);
     setDetailsError("");
     setSelectedProject(null);
+    activeOverviewProjectIdRef.current = projectId;
+    setActiveOverviewProjectId(projectId);
+    setSelectedSourceIds([]);
+    resetStage2Feedback();
+    setRiskMapData(null);
 
     try {
       const details = await getProjectById(projectId);
@@ -305,8 +476,8 @@ export default function Dashboard({
     }
   }
 
-  async function handleReconstructProject() {
-    const projectId = selectedProject?._id || selectedProject?.id;
+  async function handleReconstructProject(explicitSourceIds) {
+    const projectId = activeProjectId;
     if (!projectId) {
       setReconstructionError("A valid project ID is required.");
       return;
@@ -315,9 +486,21 @@ export default function Dashboard({
     setReconstructing(true);
     setReconstructionMessage("");
     setReconstructionError("");
+    setReconstructionResult(null);
 
     try {
-      const result = await reconstructProject(projectId);
+      const options = {};
+      if (reconstructSourceTypes.length > 0) {
+        options.sourceTypes = reconstructSourceTypes;
+      }
+      const effectiveSourceIds = Array.isArray(explicitSourceIds)
+        ? explicitSourceIds
+        : selectedSourceIds;
+      if (effectiveSourceIds.length > 0) {
+        options.sourceIds = effectiveSourceIds;
+      }
+      const result = await reconstructProject(projectId, options);
+      setReconstructionResult(result?.data || null);
       setReconstructionMessage(
         result?.message || "Knowledge reconstruction was triggered successfully."
       );
@@ -332,7 +515,7 @@ export default function Dashboard({
   }
 
   async function handleLoadRiskMap() {
-    const projectId = selectedProject?._id || selectedProject?.id;
+    const projectId = activeProjectId;
     if (!projectId) {
       setRiskMapError("A valid project ID is required.");
       return;
@@ -340,7 +523,6 @@ export default function Dashboard({
 
     setRiskMapLoading(true);
     setRiskMapError("");
-    setRiskMapData(null);
 
     try {
       const result = await getProjectRiskMap(projectId);
@@ -353,7 +535,7 @@ export default function Dashboard({
   }
 
   // Load dashboard and projects
-  async function loadDashboard() {
+  const loadDashboard = useCallback(async () => {
     setLoading(true);
     setProjectLoading(true);
     setProjectError("");
@@ -379,8 +561,16 @@ export default function Dashboard({
       const projs = projectsResult.value || [];
       setProjects(projs);
       if (projs.length > 0) {
-        const firstId = projs[0]._id || projs[0].id;
-        loadProjectSubresources(firstId);
+        const currentPreferred = activeOverviewProjectIdRef.current;
+        const targetId =
+          (currentPreferred &&
+            projs.some((p) => (p._id || p.id) === currentPreferred) &&
+            currentPreferred) ||
+          projs[0]._id ||
+          projs[0].id;
+        activeOverviewProjectIdRef.current = targetId;
+        setActiveOverviewProjectId(targetId);
+        loadProjectSubresources(targetId);
       }
     } else {
       console.error(
@@ -396,12 +586,12 @@ export default function Dashboard({
 
     setLoading(false);
     setProjectLoading(false);
-  }
+  }, [loadProjectSubresources]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadDashboard();
-  }, []);
+  }, [loadDashboard]);
 
   // Create a new project
   async function handleCreateProject(event) {
@@ -426,6 +616,13 @@ export default function Dashboard({
       });
 
       setProjects((prev) => [newProject, ...prev]);
+      const newId = newProject?._id || newProject?.id;
+      if (newId) {
+        setActiveOverviewProjectId(newId);
+        resetStage2Feedback();
+        setRiskMapData(null);
+        loadProjectSubresources(newId);
+      }
 
       setProjectName("");
       setProjectDescription("");
@@ -743,117 +940,115 @@ export default function Dashboard({
                 </div>
               </section>
 
+              <Stage2ReconstructionPanel
+                projectId={project._id || project.id}
+                sources={projectSources}
+                onGoToSources={() => onNavigate("sources", project._id || project.id)}
+                onReconstruct={handleReconstructProject}
+                reconstructing={reconstructing}
+                reconstructSourceTypes={reconstructSourceTypes}
+                onToggleSourceType={handleToggleSourceType}
+                onResetSourceTypes={() => {
+                  setReconstructSourceTypes([]);
+                  setSelectedSourceIds([]);
+                }}
+                selectedSourceIds={selectedSourceIds}
+                onToggleSourceId={handleToggleSourceId}
+                onClearSourceIds={() => setSelectedSourceIds([])}
+                reconstructionResult={reconstructionResult}
+                reconstructionMessage={reconstructionMessage}
+                reconstructionError={reconstructionError}
+                onLoadRiskMap={handleLoadRiskMap}
+                riskMapLoading={riskMapLoading}
+                riskMapData={riskMapData}
+                riskMapError={riskMapError}
+                onScanFreshness={handleScanFreshness}
+                freshnessScanning={freshnessScanning}
+                freshnessReport={freshnessReport}
+                freshnessError={freshnessError}
+                onReviewFindings={() => onNavigate?.("findings", project._id || project.id)}
+                includeChart
+              />
+
+              {/* Stage 4: Knowledge Gaps & Readiness Sign-Off */}
+              <div className="grid gap-6 lg:grid-cols-2">
+                <KnowledgeGapRadar
+                  gapsData={gapsData}
+                  gapQuestions={gapQuestions}
+                  onReviewGaps={() => onNavigate?.("findings", project._id || project.id)}
+                />
+                <ReadinessPanel
+                  key={project._id || project.id}
+                  readiness={
+                    readinessData || {
+                      readinessStatus: project.readinessStatus,
+                      checklist: project.readinessChecklist,
+                    }
+                  }
+                  evaluationResult={readinessEvaluation}
+                  onEvaluate={handleEvaluateReadiness}
+                  onSignOff={handleSignOff}
+                  isLeader={user?.role === "leader"}
+                  evaluating={evaluatingReadiness}
+                  signingOff={signingOff}
+                  actionError={readinessActionError}
+                  actionMessage={readinessActionMessage}
+                />
+              </div>
+
+              {/* Stage 5: Final Handover Package, PDF Export & History */}
               <section className="rounded-3xl border border-[#D8EADF] bg-white p-6 shadow-sm sm:p-8">
-                <div className="mb-5">
-                  <div className="mb-2 flex items-center gap-2 text-xs font-bold tracking-[0.15em] text-[#159B59]">
-                    <Sparkles size={16} />
-                    STAGE 2 · KNOWLEDGE RECONSTRUCTION
-                  </div>
-                  <h2 className="text-xl font-bold text-[#001E2B]">Reconstruct Project Knowledge</h2>
-                  <p className="mt-1 text-sm leading-6 text-[#71817B]">
-                    Analyse the connected project sources to reconstruct findings and calculate the project risk map.
-                  </p>
-                </div>
-
-                <div className="flex flex-col gap-3 sm:flex-row">
-                  <Button
-                    onClick={handleReconstructProject}
-                    disabled={reconstructing || riskMapLoading || freshnessScanning}
-                    className="gap-2 rounded-xl bg-[#159B59] text-white hover:bg-[#087A3D]"
-                  >
-                    {reconstructing ? (
-                      <><Loader2 size={16} className="animate-spin" /> Reconstructing...</>
-                    ) : (
-                      <><Sparkles size={16} /> Run Knowledge Reconstruction</>
-                    )}
-                  </Button>
-
-                  <Button
-                    variant="outline"
-                    onClick={handleLoadRiskMap}
-                    disabled={riskMapLoading || reconstructing || freshnessScanning}
-                    className="gap-2 rounded-xl border-[#D8E7DF] bg-white text-[#24483A]"
-                  >
-                    {riskMapLoading ? (
-                      <><Loader2 size={16} className="animate-spin" /> Loading Risk Map...</>
-                    ) : (
-                      <><Activity size={16} /> Load Risk Map</>
-                    )}
-                  </Button>
-
-                  <Button
-                    variant="outline"
-                    onClick={handleScanFreshness}
-                    disabled={freshnessScanning || reconstructing || riskMapLoading}
-                    className="gap-2 rounded-xl border-[#D8E7DF] bg-white text-[#24483A]"
-                  >
-                    {freshnessScanning ? (
-                      <><Loader2 size={16} className="animate-spin" /> Scanning Freshness...</>
-                    ) : (
-                      <><RefreshCw size={16} /> Scan Freshness</>
-                    )}
-                  </Button>
-                </div>
-
-                {freshnessReport && (
-                  <div className="mt-4 rounded-xl border border-[#CDE9D8] bg-[#EAF8EF] p-4 text-sm text-[#087A3D]">
-                    <div className="flex items-center gap-2 font-semibold">
-                      <CheckCircle2 size={16} />
-                      <span>Freshness scan complete</span>
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <div className="mb-1 flex items-center gap-2 text-xs font-bold tracking-[0.15em] text-[#159B59]">
+                      <Clock3 size={16} />
+                      STAGE 5 · HANDOVER PACKAGE & HISTORY
                     </div>
-                    <p className="mt-1 text-xs text-[#24483A]">
-                      {freshnessReport.message || "Freshness scanned across project findings."}
-                      {freshnessReport.staleCount !== undefined && ` Stale findings: ${freshnessReport.staleCount}.`}
-                      {freshnessReport.scannedAt && ` Last scanned: ${new Date(freshnessReport.scannedAt).toLocaleString()}.`}
+                    <h2 className="text-xl font-bold text-[#001E2B]">Handover History & Version Snapshots</h2>
+                    <p className="mt-1 text-sm text-[#71817B]">
+                      Inspect the compiled handover report, export the ReportLab PDF, and track incoming member acknowledgements.
                     </p>
                   </div>
-                )}
-                {freshnessError && (
-                  <div className="mt-4 flex items-start gap-2 rounded-xl border border-[#F1D7D2] bg-[#FFF5F3] p-3 text-sm text-[#A33F32]">
-                    <AlertTriangle size={17} className="mt-0.5 shrink-0" />
-                    <span>{freshnessError}</span>
-                  </div>
-                )}
 
-                {reconstructionMessage && (
-                  <div className="mt-4 rounded-xl border border-[#CDE9D8] bg-[#EAF8EF] p-3 text-sm text-[#087A3D]">
-                    {reconstructionMessage}
-                  </div>
-                )}
-                {reconstructionError && (
-                  <div className="mt-4 flex items-start gap-2 rounded-xl border border-[#F1D7D2] bg-[#FFF5F3] p-3 text-sm text-[#A33F32]">
-                    <AlertTriangle size={17} className="mt-0.5 shrink-0" />
-                    <span>{reconstructionError}</span>
-                  </div>
-                )}
-                {riskMapError && (
-                  <div className="mt-4 flex items-start gap-2 rounded-xl border border-[#F1D7D2] bg-[#FFF5F3] p-3 text-sm text-[#A33F32]">
-                    <AlertTriangle size={17} className="mt-0.5 shrink-0" />
-                    <span>{riskMapError}</span>
-                  </div>
-                )}
-                {riskMapData !== null && (
-                  <div className="mt-5">
-                    <h3 className="mb-2 text-sm font-semibold text-[#29483B]">Risk Map Response</h3>
-                    <pre className="max-h-96 overflow-auto rounded-xl border border-[#E1ECE6] bg-[#F8FCF9] p-4 text-xs leading-5 text-[#29483B] whitespace-pre-wrap break-words">
-                      {JSON.stringify(riskMapData, null, 2)}
-                    </pre>
-                  </div>
-                )}
-              </section>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => onNavigate?.("handover", project._id || project.id)}
+                      className="gap-2 rounded-xl border-[#D8E7DF] bg-white text-[#24483A] hover:border-[#159B59]"
+                    >
+                      <FileText size={15} />
+                      Inspect Handover Report
+                    </Button>
 
-              {/* Handover History & Version Snapshots */}
-              <section className="rounded-3xl border border-[#D8EADF] bg-white p-6 shadow-sm sm:p-8">
-                <div className="mb-4 flex items-center gap-2">
-                  <Clock3 size={19} className="text-[#159B59]" />
-                  <h2 className="text-xl font-bold text-[#001E2B]">Handover History & Version Snapshots</h2>
+                    <Button
+                      onClick={handleExportHandoverPdf}
+                      disabled={exportingPdf}
+                      className="gap-2 rounded-xl bg-[#001E2B] text-white hover:bg-[#023D35]"
+                    >
+                      {exportingPdf ? (
+                        <><Loader2 size={15} className="animate-spin" /> Exporting...</>
+                      ) : (
+                        <>
+                          <Download size={15} />
+                          {(readinessData?.readinessStatus || project.readinessStatus) === "Approved for Sharing"
+                            ? "Export Official PDF"
+                            : "Export Draft PDF"}
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </div>
-                <p className="text-sm text-[#71817B]">
-                  Audit trail of generated handover packages, version snapshots, and acknowledgement receipts.
-                </p>
+
+                {pdfExportError && (
+                  <div className="mb-4 flex items-start gap-2 rounded-xl border border-[#F1D7D2] bg-[#FFF5F3] p-3 text-xs text-[#A33F32]">
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                    <span>{pdfExportError}</span>
+                  </div>
+                )}
+
                 {historyData.length === 0 ? (
                   <div className="mt-4 rounded-2xl border border-dashed border-[#D8EADF] bg-[#F8FCF9] p-6 text-center text-sm text-[#71817B]">
-                    No handover versions or receipts recorded yet.
+                    No handover versions or receipts recorded yet. Sign off readiness in Stage 4 to generate Snapshot v1.
                   </div>
                 ) : (
                   <div className="mt-4 overflow-hidden rounded-2xl border border-[#E1ECE6]">
@@ -863,25 +1058,40 @@ export default function Dashboard({
                           <th className="px-4 py-3">Version / Snapshot</th>
                           <th className="px-4 py-3">Status</th>
                           <th className="px-4 py-3">Timestamp</th>
-                          <th className="px-4 py-3">Recipient / Sign-off</th>
+                          <th className="px-4 py-3">Recipient Acknowledgement</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#EAF1ED]">
                         {historyData.map((item, idx) => (
                           <tr key={item._id || item.id || idx} className="hover:bg-[#F9FCFA]">
                             <td className="px-4 py-3 font-medium text-[#001E2B]">
-                              {item.version || item.snapshotId || `Snapshot #${idx + 1}`}
+                              Version {item.version ?? idx + 1}
+                              {item.approvedSnapshot?.approvedFindingsCount !== undefined && (
+                                <span className="ml-2 text-xs font-normal text-[#71817B]">
+                                  ({item.approvedSnapshot.approvedFindingsCount} findings)
+                                </span>
+                              )}
                             </td>
                             <td className="px-4 py-3">
                               <span className="rounded-full bg-[#E8F8EF] px-2.5 py-1 text-xs font-semibold text-[#159B59]">
-                                {item.status || item.type || "Saved"}
+                                {item.approvedSnapshot?.readinessStatus ||
+                                  item.status ||
+                                  "Approved for Sharing"}
                               </span>
                             </td>
                             <td className="px-4 py-3 text-xs text-[#71817B]">
-                              {item.createdAt || item.timestamp ? new Date(item.createdAt || item.timestamp).toLocaleString() : "N/A"}
+                              {item.acknowledgedAt || item.createdAt || item.approvedSnapshot?.approvedAt
+                                ? new Date(
+                                    item.acknowledgedAt ||
+                                      item.createdAt ||
+                                      item.approvedSnapshot?.approvedAt
+                                  ).toLocaleString()
+                                : "N/A"}
                             </td>
                             <td className="px-4 py-3 text-xs text-[#64756F]">
-                              {item.acknowledgedBy?.name || item.acknowledgedBy || item.signer || "Pending"}
+                              {item.acknowledgedBy
+                                ? `✓ ${item.acknowledgedBy.name || item.acknowledgedBy.email || item.acknowledgedBy}`
+                                : "Pending acknowledgement"}
                             </td>
                           </tr>
                         ))}
@@ -1230,28 +1440,49 @@ export default function Dashboard({
                 </div>
 
                 <h2 className="text-2xl font-bold tracking-tight text-[#001E2B] sm:text-3xl">
-                  {projects[0]?.name || "Sanchaya"}
+                  {activeProject?.name || "Sanchaya"}
                 </h2>
 
                 <p className="mt-2 text-sm text-[#71817B]">
-                  {projects[0]?.description ||
+                  {activeProject?.description ||
                     "Preserving Knowledge. Connecting People. Continuing Projects."}
                 </p>
               </div>
 
-              <div
-                className={`inline-flex w-fit items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold ${
-                  shared
-                    ? "border-[#CDE9D8] bg-[#EAF8EF] text-[#087A3D]"
-                    : "border-[#F1E2C7] bg-[#FFF8EC] text-[#9A681D]"
-                }`}
-              >
-                <span
-                  className={`h-2 w-2 rounded-full ${
-                    shared ? "bg-[#159B59]" : "bg-[#D99A35]"
+              <div className="flex flex-wrap items-center gap-3">
+                {projects.length > 1 && (
+                  <select
+                    aria-label="Select active project"
+                    value={activeProjectId}
+                    onChange={(e) => handleSelectOverviewProject(e.target.value)}
+                    className="rounded-xl border border-[#D8E7DF] bg-[#F8FCF9] px-3 py-2 text-xs font-semibold text-[#29483B] outline-none focus:border-[#159B59]"
+                  >
+                    {projects.map((p) => (
+                      <option key={p._id || p.id} value={p._id || p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+
+                <div
+                  className={`inline-flex w-fit items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold ${
+                    shared || activeProject?.readinessStatus === "Approved for Sharing"
+                      ? "border-[#CDE9D8] bg-[#EAF8EF] text-[#087A3D]"
+                      : "border-[#F1E2C7] bg-[#FFF8EC] text-[#9A681D]"
                   }`}
-                />
-                {shared ? "Handover Shared" : "Handover In Progress"}
+                >
+                  <span
+                    className={`h-2 w-2 rounded-full ${
+                      shared || activeProject?.readinessStatus === "Approved for Sharing"
+                        ? "bg-[#159B59]"
+                        : "bg-[#D99A35]"
+                    }`}
+                  />
+                  {shared
+                    ? "Handover Shared"
+                    : activeProject?.readinessStatus || "Handover In Progress"}
+                </div>
               </div>
             </div>
 
@@ -1289,7 +1520,8 @@ export default function Dashboard({
               </div>
 
               <Button
-                onClick={() => onNavigate("sources", projects[0]?._id || projects[0]?.id)}
+                onClick={() => onNavigate("sources", activeProjectId)}
+                disabled={!activeProjectId}
                 className="h-10 gap-2 rounded-xl bg-[#159B59] px-5 text-white shadow-sm transition hover:bg-[#087A3D]"
               >
                 <FolderKanban size={16} />
@@ -1319,15 +1551,47 @@ export default function Dashboard({
           </div>
 
           <SourceManagement
-            projectId={selectedProject?._id || selectedProject?.id}
+            projectId={activeProjectId}
             onUploadSources={() =>
-              onNavigate?.(
-                "sources",
-                selectedProject?._id || selectedProject?.id
-              )
+              onNavigate?.("sources", activeProjectId)
             }
           />
         </section>
+
+        {/* Stage 2: Knowledge Reconstruction & Risk Map */}
+        {activeProjectId && (
+          <section className="dashboard-enter dashboard-delay-2 mb-9">
+            <Stage2ReconstructionPanel
+              projectId={activeProjectId}
+              sources={projectSources}
+              onGoToSources={() => onNavigate?.("sources", activeProjectId)}
+              onReconstruct={handleReconstructProject}
+              reconstructing={reconstructing}
+              reconstructSourceTypes={reconstructSourceTypes}
+              onToggleSourceType={handleToggleSourceType}
+              onResetSourceTypes={() => {
+                setReconstructSourceTypes([]);
+                setSelectedSourceIds([]);
+              }}
+              selectedSourceIds={selectedSourceIds}
+              onToggleSourceId={handleToggleSourceId}
+              onClearSourceIds={() => setSelectedSourceIds([])}
+              reconstructionResult={reconstructionResult}
+              reconstructionMessage={reconstructionMessage}
+              reconstructionError={reconstructionError}
+              onLoadRiskMap={handleLoadRiskMap}
+              riskMapLoading={riskMapLoading}
+              riskMapData={riskMapData}
+              riskMapError={riskMapError}
+              onScanFreshness={handleScanFreshness}
+              freshnessScanning={freshnessScanning}
+              freshnessReport={freshnessReport}
+              freshnessError={freshnessError}
+              onReviewFindings={() => onNavigate?.("findings", activeProjectId)}
+              showRiskMap={false}
+            />
+          </section>
+        )}
 
         {/* Findings statistics */}
         <section className="dashboard-enter dashboard-delay-2 mb-9">
@@ -1394,6 +1658,17 @@ export default function Dashboard({
             </div>
           </div>
 
+          {activeProjectId && (
+            <div className="mt-5">
+              <RiskMapPanel
+                riskMapData={riskMapData}
+                loading={riskMapLoading}
+                error={riskMapError}
+                onRefresh={handleLoadRiskMap}
+              />
+            </div>
+          )}
+
           <p className="mt-3 flex items-start gap-2 text-xs leading-5 text-[#82918B]">
             <ShieldCheck size={14} className="mt-0.5 shrink-0" />
             Contribution data represents recorded activity, not proof of
@@ -1424,17 +1699,21 @@ export default function Dashboard({
               history={historyData}
             />
             <ReadinessPanel
+              key={activeProjectId}
               readiness={
                 readinessData || {
-                  readinessStatus: selectedProject?.readinessStatus,
-                  checklist: selectedProject?.readinessChecklist,
+                  readinessStatus: activeProject?.readinessStatus,
+                  checklist: activeProject?.readinessChecklist,
                 }
               }
+              evaluationResult={readinessEvaluation}
               onEvaluate={handleEvaluateReadiness}
               onSignOff={handleSignOff}
               isLeader={user?.role === "leader"}
               evaluating={evaluatingReadiness}
               signingOff={signingOff}
+              actionError={readinessActionError}
+              actionMessage={readinessActionMessage}
             />
           </div>
         </section>
@@ -1457,11 +1736,9 @@ export default function Dashboard({
 
           <KnowledgeGapRadar
             gapsData={gapsData}
+            gapQuestions={gapQuestions}
             onReviewGaps={() =>
-              onNavigate?.(
-                "findings",
-                selectedProject?._id || selectedProject?.id
-              )
+              onNavigate?.("findings", activeProjectId)
             }
           />
         </section>
@@ -1495,33 +1772,69 @@ export default function Dashboard({
               </div>
             </div>
 
-            {!shared ? (
-              <Button
-                onClick={() =>
-                  onNavigate(
-                    "findings",
-                    selectedProject?._id || selectedProject?.id
-                  )
-                }
-                className="h-11 shrink-0 gap-2 rounded-xl bg-[#159B59] px-5 text-white shadow-sm transition hover:bg-[#087A3D]"
-              >
-                <ClipboardCheck size={17} />
-                Review Findings
-                <ArrowUpRight size={15} />
-              </Button>
-            ) : (
-              <div className="dashboard-success min-w-[230px] rounded-2xl border border-[#CDE9D8] bg-white p-4 shadow-sm">
-                <div className="flex items-center gap-2 text-sm font-semibold text-[#087A3D]">
-                  <CheckCircle2 size={17} />
-                  Handover marked as shared
-                </div>
+            <div className="flex flex-wrap items-center gap-3">
+              {!shared ? (
+                <Button
+                  onClick={() =>
+                    onNavigate("findings", activeProjectId)
+                  }
+                  disabled={!activeProjectId}
+                  className="h-11 shrink-0 gap-2 rounded-xl bg-[#159B59] px-5 text-white shadow-sm transition hover:bg-[#087A3D]"
+                >
+                  <ClipboardCheck size={17} />
+                  Review Findings
+                  <ArrowUpRight size={15} />
+                </Button>
+              ) : (
+                <div className="dashboard-success min-w-[230px] rounded-2xl border border-[#CDE9D8] bg-white p-4 shadow-sm">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-[#087A3D]">
+                    <CheckCircle2 size={17} />
+                    Handover marked as shared
+                  </div>
 
-                <p className="mt-2 text-sm text-[#64756F]">
-                  {approvedCount} approved findings have been shared.
-                </p>
-              </div>
-            )}
+                  <p className="mt-2 text-sm text-[#64756F]">
+                    {approvedCount} approved findings have been shared.
+                  </p>
+                </div>
+              )}
+
+              <Button
+                variant="outline"
+                onClick={() => onNavigate("handover", activeProjectId)}
+                disabled={!activeProjectId}
+                className="h-11 shrink-0 gap-2 rounded-xl border-[#D8E7DF] bg-white px-4 text-[#24483A] hover:border-[#159B59]"
+              >
+                <FileText size={16} />
+                View Handover Package
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={handleExportHandoverPdf}
+                disabled={!activeProjectId || exportingPdf}
+                className="h-11 shrink-0 gap-2 rounded-xl border-[#D8E7DF] bg-white px-4 text-[#001E2B] hover:border-[#001E2B]"
+              >
+                {exportingPdf ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <Download size={16} />
+                )}
+                {exportingPdf
+                  ? "Exporting..."
+                  : (readinessData?.readinessStatus || activeProject?.readinessStatus) ===
+                      "Approved for Sharing"
+                    ? "Export Official PDF"
+                    : "Export Draft PDF"}
+              </Button>
+            </div>
           </div>
+
+          {pdfExportError && (
+            <div className="relative mt-4 flex items-start gap-2 rounded-xl border border-[#F1D7D2] bg-[#FFF5F3] p-3 text-xs text-[#A33F32]">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+              <span>{pdfExportError}</span>
+            </div>
+          )}
         </section>
 
         <footer className="mt-8 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-[11px] text-[#91A099]">

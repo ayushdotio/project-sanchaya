@@ -20,10 +20,10 @@ const connectSchema = z.object({
 });
 
 const syncSchema = z.object({
-  githubRepo: z.string().optional(),
+  githubRepo: z.string().min(1).optional(),
   token: z.string().optional(),
-  branches: z.array(z.string()).optional(),
-  limit: z.number().optional(),
+  branches: z.array(z.string().min(1)).max(10).optional(),
+  limit: z.number().int().min(1).max(100).optional(),
 });
 
 /**

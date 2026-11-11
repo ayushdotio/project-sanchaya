@@ -12,42 +12,65 @@ export interface NormalizedGithubItem {
   url: string;
 }
 
+export interface FetchCommitsOptions {
+  branch?: string;
+  limit?: number;
+}
+
+export interface FetchListOptions {
+  limit?: number;
+}
+
 export class GithubService {
   private octokit: Octokit;
 
   constructor(token?: string) {
-    const auth = token || env.GITHUB_GLOBAL_PAT;
+    const auth = token?.trim() || env.GITHUB_GLOBAL_PAT;
     this.octokit = new Octokit({ auth });
   }
 
   /**
-   * Parse owner and repo name from string "owner/repo" or GitHub URL
+   * Parse owner and repo name from string "owner/repo" or GitHub URL.
    */
-  private parseRepoString(repoInput: string): { owner: string; repo: string } {
-    const cleaned = repoInput.replace(/^https?:\/\/github\.com\//i, "").replace(/\.git$/i, "");
-    const parts = cleaned.split("/");
+  parseRepoString(repoInput: string): { owner: string; repo: string; slug: string } {
+    const cleaned = repoInput
+      .trim()
+      .replace(/^https?:\/\/github\.com\//i, "")
+      .replace(/\.git$/i, "")
+      .replace(/\/+$/, "");
+    const parts = cleaned.split("/").filter(Boolean);
     const owner = parts[0];
     const repo = parts[1];
-    if (!owner || !repo) {
-      throw new Error(`Invalid GitHub repository format '${repoInput}'. Expected 'owner/repo'.`);
+    if (!owner || !repo || parts.length > 2) {
+      const err = new Error(
+        `Invalid GitHub repository format '${repoInput}'. Expected 'owner/repo' or 'https://github.com/owner/repo'.`,
+      ) as Error & { statusCode?: number };
+      err.statusCode = 400;
+      throw err;
     }
-    return { owner, repo };
+    return { owner, repo, slug: `${owner}/${repo}` };
   }
 
   /**
-   * Read-only fetch of repository commits (latest 50)
+   * Read-only fetch of repository commits (default latest 50, max 100)
    */
-  async fetchCommits(repoInput: string): Promise<NormalizedGithubItem[]> {
+  async fetchCommits(
+    repoInput: string,
+    options: FetchCommitsOptions = {},
+  ): Promise<NormalizedGithubItem[]> {
     const { owner, repo } = this.parseRepoString(repoInput);
+    const perPage = Math.min(Math.max(options.limit ?? 50, 1), 100);
 
     const { data: commits } = await this.octokit.rest.repos.listCommits({
       owner,
       repo,
-      per_page: 50,
+      ...(options.branch ? { sha: options.branch } : {}),
+      per_page: perPage,
     });
 
     return commits.map((c) => {
-      const commitDate = c.commit.committer?.date || c.commit.author?.date || new Date().toISOString();
+      const commitDate =
+        c.commit.committer?.date || c.commit.author?.date || new Date().toISOString();
       return {
         id: c.sha.substring(0, 12),
         type: "commit",
@@ -62,16 +85,20 @@ export class GithubService {
   }
 
   /**
-   * Read-only fetch of pull requests (closed & open, latest 30)
+   * Read-only fetch of pull requests (closed & open, default latest 30)
    */
-  async fetchPullRequests(repoInput: string): Promise<NormalizedGithubItem[]> {
+  async fetchPullRequests(
+    repoInput: string,
+    options: FetchListOptions = {},
+  ): Promise<NormalizedGithubItem[]> {
     const { owner, repo } = this.parseRepoString(repoInput);
+    const perPage = Math.min(Math.max(options.limit ?? 30, 1), 100);
 
     const { data: prs } = await this.octokit.rest.pulls.list({
       owner,
       repo,
       state: "all",
-      per_page: 30,
+      per_page: perPage,
     });
 
     return prs.map((pr) => ({
@@ -87,16 +114,20 @@ export class GithubService {
   }
 
   /**
-   * Read-only fetch of repository issues (latest 30)
+   * Read-only fetch of repository issues (default latest 30)
    */
-  async fetchIssues(repoInput: string): Promise<NormalizedGithubItem[]> {
+  async fetchIssues(
+    repoInput: string,
+    options: FetchListOptions = {},
+  ): Promise<NormalizedGithubItem[]> {
     const { owner, repo } = this.parseRepoString(repoInput);
+    const perPage = Math.min(Math.max(options.limit ?? 30, 1), 100);
 
     const { data: issues } = await this.octokit.rest.issues.listForRepo({
       owner,
       repo,
       state: "all",
-      per_page: 30,
+      per_page: perPage,
     });
 
     // Exclude pull requests which the issues endpoint returns
@@ -114,4 +145,3 @@ export class GithubService {
       }));
   }
 }
-

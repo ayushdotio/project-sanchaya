@@ -461,5 +461,209 @@ describe("AI Engine <-> Backend Integration", () => {
     });
     assert.equal(gap.toJSON().gap_category, "conflicting_sources");
   });
+
+  it("filters SourceRecords by sourceIds and sourceTypes in POST /reconstruct and returns filter-specific 400 when unmatched", async () => {
+    mockAuthenticatedUser();
+    mock.method(Project, "findById", async () => ({ _id: PROJECT_ID }) as any);
+
+    let capturedFilter: Record<string, any> | undefined;
+    mock.method(SourceRecord, "find", (filter: Record<string, any>) => {
+      capturedFilter = filter;
+      return {
+        sort: () => ({
+          lean: async () => [],
+        }),
+      } as any;
+    });
+
+    const emptyRes = await dispatchJsonRequest(
+      `/api/projects/${PROJECT_ID}/reconstruct`,
+      {
+        headers: { Authorization: `Bearer ${signTestToken("leader")}` },
+        body: {
+          sourceIds: ["SRC-GH-999"],
+          sourceTypes: ["github"],
+        },
+      },
+    );
+
+    assert.equal(emptyRes.status, 400);
+    assert.equal(emptyRes.body.success, false);
+    assert.match(emptyRes.body.error, /matched the selected sourceIds\/sourceTypes filter/i);
+    assert.deepEqual(capturedFilter?.source_id, { $in: ["SRC-GH-999"] });
+    assert.deepEqual(capturedFilter?.source_type, { $in: ["github"] });
+
+    mockSourceRecords(sampleSources);
+    mock.method(axios, "post", async (_url: string, payload: any) => {
+      assert.equal(payload.sourceRecords.length, 1);
+      return {
+        data: {
+          success: true,
+          message: "Filtered extraction complete",
+          findingsCount: 0,
+          supportedCount: 0,
+          gapsGenerated: 0,
+        },
+      } as any;
+    });
+
+    const okRes = await dispatchJsonRequest(
+      `/api/projects/${PROJECT_ID}/reconstruct`,
+      {
+        headers: { Authorization: `Bearer ${signTestToken("leader")}` },
+        body: {
+          sourceIds: ["SRC-DOC-001"],
+          sourceTypes: ["document"],
+        },
+      },
+    );
+
+    assert.equal(okRes.status, 200);
+    assert.equal(okRes.body.success, true);
+    assert.equal(okRes.body.data.sourcesUsed, 1);
+    assert.deepEqual(okRes.body.data.sourceIds, ["SRC-DOC-001"]);
+  });
+
+  it("invalidates stale Approved for Sharing status and updates decisionsBackedByEvidence when POST /reconstruct extracts findings", async () => {
+    mockAuthenticatedUser();
+    let savedCount = 0;
+    const projectDoc: any = {
+      _id: PROJECT_ID,
+      readinessStatus: "Approved for Sharing",
+      approvedBy: "672f8b9c1a2b3c4d5e6f7a8b",
+      approvedAt: new Date("2026-11-01T00:00:00.000Z"),
+      approvedSnapshotHash: "hash-before-reconstruct",
+      readinessChecklist: {
+        sourcesConnected: true,
+        decisionsBackedByEvidence: true,
+        criticalGapsResolved: true,
+        highRiskModulesReviewed: true,
+        freshnessVerified: true,
+        handoverDocumentCompiled: true,
+        leaderApprovalRecorded: true,
+      },
+      save: async () => {
+        savedCount += 1;
+        return projectDoc;
+      },
+    };
+    mock.method(Project, "findById", async () => projectDoc);
+    mockSourceRecords(sampleSources);
+
+    let countCalls = 0;
+    mock.method(Finding, "countDocuments", async () => {
+      countCalls += 1;
+      return countCalls === 1 ? 3 : 1;
+    });
+
+    mock.method(axios, "post", async () => ({
+      data: {
+        success: true,
+        message: "Extraction complete",
+        findingsCount: 3,
+        supportedCount: 2,
+        gapsGenerated: 1,
+      },
+    }) as any);
+
+    const res = await dispatchJsonRequest(
+      `/api/projects/${PROJECT_ID}/reconstruct`,
+      {
+        headers: { Authorization: `Bearer ${signTestToken("leader")}` },
+      },
+    );
+
+    assert.equal(res.status, 200);
+    assert.equal(savedCount, 1);
+    assert.equal(projectDoc.readinessStatus, "Ready for Review");
+    assert.equal(projectDoc.readinessChecklist.decisionsBackedByEvidence, false);
+    assert.equal(projectDoc.readinessChecklist.leaderApprovalRecorded, false);
+    assert.equal(projectDoc.approvedBy, null);
+    assert.equal(projectDoc.approvedAt, null);
+    assert.equal(projectDoc.approvedSnapshotHash, null);
+  });
+
+  it("maps downstream AI Engine ECONNABORTED timeout errors to HTTP 504 on POST /reconstruct", async () => {
+    mockAuthenticatedUser();
+    mock.method(Project, "findById", async () => ({ _id: PROJECT_ID }) as any);
+    mockSourceRecords(sampleSources);
+
+    mock.method(axios, "post", async () => {
+      const err: any = new Error("timeout of 120000ms exceeded");
+      err.code = "ECONNABORTED";
+      throw err;
+    });
+
+    const res = await dispatchJsonRequest(
+      `/api/projects/${PROJECT_ID}/reconstruct`,
+      {
+        headers: { Authorization: `Bearer ${signTestToken("leader")}` },
+      },
+    );
+
+    assert.equal(res.status, 504);
+    assert.equal(res.body.success, false);
+    assert.match(res.body.error, /timed out/i);
+  });
+
+  it("resolves Vercel runtime service bindings dynamically (including base paths) via process.env", async () => {
+    mockAuthenticatedUser();
+    mock.method(Project, "findById", async () => ({ _id: PROJECT_ID }) as any);
+    mockSourceRecords(sampleSources);
+
+    const prevAiUrl = process.env.AI_SERVICE_URL;
+    const prevAnalyticsUrl = process.env.ANALYTICS_SERVICE_URL;
+    process.env.AI_SERVICE_URL = "https://internal.vercel.run/_svc/ai-engine/";
+    process.env.ANALYTICS_SERVICE_URL = "https://internal.vercel.run/_svc/analytics";
+
+    const calledUrls: string[] = [];
+    mock.method(axios, "post", async (url: string) => {
+      calledUrls.push(url);
+      return {
+        data: {
+          success: true,
+          findingsCount: 0,
+          supportedCount: 0,
+          gapsGenerated: 0,
+          riskSummary: { units: [], rules: [] },
+        },
+      } as any;
+    });
+
+    try {
+      const reconRes = await dispatchJsonRequest(
+        `/api/projects/${PROJECT_ID}/reconstruct`,
+        {
+          headers: { Authorization: `Bearer ${signTestToken("leader")}` },
+        },
+      );
+      assert.equal(reconRes.status, 200);
+
+      const riskRes = await dispatchJsonRequest(
+        `/api/projects/${PROJECT_ID}/risk-map`,
+        {
+          method: "GET",
+          headers: { Authorization: `Bearer ${signTestToken("leader")}` },
+        },
+      );
+      assert.equal(riskRes.status, 200);
+
+      assert.deepEqual(calledUrls, [
+        "https://internal.vercel.run/_svc/ai-engine/internal/extract-and-verify",
+        "https://internal.vercel.run/_svc/analytics/internal/compute-risk-and-readiness",
+      ]);
+    } finally {
+      if (prevAiUrl === undefined) {
+        delete process.env.AI_SERVICE_URL;
+      } else {
+        process.env.AI_SERVICE_URL = prevAiUrl;
+      }
+      if (prevAnalyticsUrl === undefined) {
+        delete process.env.ANALYTICS_SERVICE_URL;
+      } else {
+        process.env.ANALYTICS_SERVICE_URL = prevAnalyticsUrl;
+      }
+    }
+  });
 });
 

@@ -1,6 +1,19 @@
 import { useEffect, useState } from "react";
 import { getFindings } from "../api/findingsApi";
+import { getProjectRiskMap } from "../api/reconstructionApi";
+import { getReadiness, getUnresolvedGaps, getGapQuestions } from "../api/gapsApi";
 import { getProjects } from "@/services/projectsApi";
+import ContributionChart from "@/components/dashboard/ContributionChart";
+import RiskMapPanel from "@/components/dashboard/RiskMapPanel";
+import KnowledgeGapRadar from "@/components/dashboard/KnowledgeGapRadar";
+import ReadinessPanel from "@/components/dashboard/ReadinessPanel";
+import {
+  StatusBadge,
+  FreshnessBadge,
+  ReviewBadge,
+  SelfReportedBadge,
+  STATUS,
+} from "../components/Badges";
 import { Button } from "@/components/ui/button";
 import {
   ClipboardList,
@@ -20,10 +33,18 @@ import {
 
 export default function OutgoingDashboard({ user, onNavigate }) {
   const [findings, setFindings] = useState([]);
+  const [riskMapData, setRiskMapData] = useState(null);
+  const [riskMapLoading, setRiskMapLoading] = useState(false);
+  const [riskMapError, setRiskMapError] = useState("");
+  const [readinessData, setReadinessData] = useState(null);
+  const [gapsData, setGapsData] = useState(null);
+  const [gapQuestions, setGapQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [projects, setProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [findingFilter, setFindingFilter] = useState("all");
+  const [showAllFindings, setShowAllFindings] = useState(false);
 
   useEffect(() => {
     async function loadProjects() {
@@ -42,27 +63,83 @@ export default function OutgoingDashboard({ user, onNavigate }) {
   }, []);
 
   useEffect(() => {
-    async function loadFindings() {
+    async function loadProjectData() {
       if (!selectedProjectId) {
         setFindings([]);
+        setRiskMapData(null);
+        setReadinessData(null);
+        setGapsData(null);
+        setGapQuestions([]);
         setLoading(false);
         return;
       }
       setLoading(true);
       setError(false);
+      setRiskMapLoading(true);
+      setRiskMapError("");
       try {
-        const result = await getFindings(selectedProjectId);
-        setFindings(Array.isArray(result) ? result : []);
-      } catch (err) {
-        console.error("Could not load outgoing dashboard findings:", err);
-        setError(true);
+        const [findingsRes, riskMapRes, readinessRes, gapsRes, questionsRes] =
+          await Promise.allSettled([
+            getFindings(selectedProjectId),
+            getProjectRiskMap(selectedProjectId),
+            getReadiness(selectedProjectId),
+            getUnresolvedGaps(selectedProjectId),
+            getGapQuestions(selectedProjectId),
+          ]);
+
+        if (findingsRes.status === "fulfilled") {
+          setFindings(Array.isArray(findingsRes.value) ? findingsRes.value : []);
+        } else {
+          console.error("Could not load outgoing dashboard findings:", findingsRes.reason);
+          setError(true);
+        }
+
+        if (riskMapRes.status === "fulfilled") {
+          setRiskMapData(riskMapRes.value || null);
+        } else {
+          setRiskMapData(null);
+          setRiskMapError(riskMapRes.reason?.message || "Unable to load risk map.");
+        }
+
+        if (readinessRes.status === "fulfilled") {
+          setReadinessData(readinessRes.value || null);
+        } else {
+          setReadinessData(null);
+        }
+
+        if (gapsRes.status === "fulfilled") {
+          setGapsData(gapsRes.value || null);
+        } else {
+          setGapsData(null);
+        }
+
+        if (questionsRes.status === "fulfilled") {
+          setGapQuestions(Array.isArray(questionsRes.value) ? questionsRes.value : []);
+        } else {
+          setGapQuestions([]);
+        }
       } finally {
         setLoading(false);
+        setRiskMapLoading(false);
       }
     }
 
-    loadFindings();
+    loadProjectData();
   }, [selectedProjectId]);
+
+  async function handleRefreshRiskMap() {
+    if (!selectedProjectId) return;
+    setRiskMapLoading(true);
+    setRiskMapError("");
+    try {
+      const result = await getProjectRiskMap(selectedProjectId);
+      setRiskMapData(result || null);
+    } catch (err) {
+      setRiskMapError(err.message || "Unable to load risk map.");
+    } finally {
+      setRiskMapLoading(false);
+    }
+  }
 
   const activeProject =
     projects.find((p) => (p._id || p.id) === selectedProjectId) || projects[0];
@@ -75,11 +152,31 @@ export default function OutgoingDashboard({ user, onNavigate }) {
     (finding) => (finding.status || finding.verification_status || "").toLowerCase() === "supported"
   );
 
+  const taskAndBlockerFindings = findings.filter((finding) => {
+    const cat = (finding.category || "").toLowerCase();
+    return cat === "task" || cat === "blocker";
+  });
+
+  const liveReadinessStatus =
+    readinessData?.readinessStatus ||
+    activeProject?.readinessStatus ||
+    "Handover in progress";
+
+  const pendingGapQuestionsCount = gapQuestions.filter(
+    (q) => q.status === "pending"
+  ).length;
+
+  const livePendingCount =
+    gapQuestions.length > 0 ? pendingGapQuestionsCount : pendingFindings.length;
+
   const stats = [
     {
       title: "Pending Questions",
-      value: pendingFindings.length,
-      description: "Need your knowledge and input",
+      value: livePendingCount,
+      description:
+        gapQuestions.length > 0
+          ? "Stage 4 gap questions awaiting your answer"
+          : "Need your knowledge and input",
       icon: Clock,
       theme: "amber",
     },
@@ -122,7 +219,7 @@ export default function OutgoingDashboard({ user, onNavigate }) {
 
             <div className="inline-flex w-fit items-center gap-2 rounded-full border border-[#F1E2C7] bg-[#FFF8EC] px-4 py-2 text-sm font-semibold text-[#9A681D]">
               <span className="h-2 w-2 rounded-full bg-[#D99A35]" />
-              Handover in progress
+              {liveReadinessStatus}
             </div>
           </div>
         </header>
@@ -183,7 +280,7 @@ export default function OutgoingDashboard({ user, onNavigate }) {
               </span>
               <span className="inline-flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-[#D99A35]" />
-                Handover: In Progress
+                Readiness: {liveReadinessStatus}
               </span>
             </div>
           </div>
@@ -288,8 +385,9 @@ export default function OutgoingDashboard({ user, onNavigate }) {
               <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-[#F1E6D4] bg-[#FFFBF4] p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-sm font-semibold text-[#29483B]">
-                    {pendingFindings.length} findings need additional review
-                    or clarification.
+                    {gapQuestions.length > 0
+                      ? `${pendingGapQuestionsCount} targeted gap question(s) need your self-reported answer.`
+                      : `${pendingFindings.length} findings need additional review or clarification.`}
                   </p>
                   <p className="mt-1 text-xs text-[#82918B]">
                     Your answers help preserve context that may not exist in project files.
@@ -312,6 +410,198 @@ export default function OutgoingDashboard({ user, onNavigate }) {
           </div>
         </section>
 
+        {/* Stage 4: Knowledge Gap Radar & Read-Only Readiness */}
+        {selectedProjectId && (
+          <section className="dashboard-enter dashboard-delay-3 mb-9 grid gap-5 lg:grid-cols-2">
+            <KnowledgeGapRadar
+              gapsData={gapsData}
+              gapQuestions={gapQuestions}
+              onOpenGapLoop={() => onNavigate("questions", selectedProjectId)}
+            />
+            <ReadinessPanel
+              readiness={
+                readinessData || {
+                  readinessStatus: activeProject?.readinessStatus,
+                  checklist: activeProject?.readinessChecklist,
+                }
+              }
+              isLeader={false}
+            />
+          </section>
+        )}
+
+        {/* Stage 2: Read-Only Contribution Concentration Risk Map */}
+        {selectedProjectId && (
+          <section className="dashboard-enter dashboard-delay-3 mb-9 space-y-5">
+            <div>
+              <p className="mb-1 text-[11px] font-bold tracking-[0.16em] text-[#159B59]">
+                STAGE 2 · READ-ONLY RISK INSPECTION
+              </p>
+              <h2 className="text-xl font-bold tracking-tight text-[#001E2B] sm:text-2xl">
+                Contribution Concentration Risk Map
+              </h2>
+              <p className="mt-1 text-sm text-[#71817B]">
+                Review modules and tasks where project context is concentrated on you so you can prioritize knowledge transfer.
+              </p>
+            </div>
+
+            <div className="grid gap-5 lg:grid-cols-2">
+              <div className="min-w-0">
+                <ContributionChart riskMapData={riskMapData} />
+              </div>
+              <div className="min-w-0">
+                <RiskMapPanel
+                  riskMapData={riskMapData}
+                  loading={riskMapLoading}
+                  error={riskMapError}
+                  onRefresh={handleRefreshRiskMap}
+                />
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* Stage 3: Read-Only Candidate Findings Inspection */}
+        {selectedProjectId && (
+          <section className="dashboard-enter dashboard-delay-3 mb-9 rounded-3xl border border-[#DCE9E3] bg-white p-6 shadow-[0_8px_30px_rgba(15,75,48,0.04)] sm:p-7">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="mb-1 text-[11px] font-bold tracking-[0.16em] text-[#159B59]">
+                  STAGE 3 · CANDIDATE FINDINGS (READ-ONLY)
+                </p>
+                <h2 className="text-xl font-bold tracking-tight text-[#001E2B] sm:text-2xl">
+                  Inspect Reconstructed Findings
+                </h2>
+                <p className="mt-1 text-sm text-[#71817B]">
+                  Review claims extracted from project sources along with deterministic verification badges and excerpts.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {["all", "needs_review", "conflicting", "unknown", "supported"].map((key) => {
+                  const active = findingFilter === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setFindingFilter(key)}
+                      className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                        active
+                          ? "border-[#001E2B] bg-[#001E2B] text-white"
+                          : "border-[#DCE9E3] bg-[#F8FCF9] text-[#4A5F5B] hover:border-[#159B59]"
+                      }`}
+                    >
+                      {key === "all" ? `All (${findings.length})` : STATUS[key]?.label || key}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {(() => {
+              const filtered =
+                findingFilter === "all"
+                  ? findings
+                  : findings.filter((f) => f.status === findingFilter);
+
+              if (filtered.length === 0) {
+                return (
+                  <p className="mt-5 rounded-2xl border border-dashed border-[#DCE9E3] bg-[#F8FAF9] p-5 text-sm text-[#71817B]">
+                    No candidate findings match this filter yet.
+                  </p>
+                );
+              }
+
+              const visibleFindings = showAllFindings
+                ? filtered
+                : filtered.slice(0, 12);
+
+              return (
+                <>
+                  <ul className="mt-5 space-y-3">
+                    {visibleFindings.map((f) => (
+                      <li
+                        key={f.id}
+                        className="rounded-2xl border border-[#E4EDE7] bg-[#FAFDFB] p-4 space-y-2"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[#4A5F5B] border border-[#DCE9E3]">
+                              {f.category}
+                            </span>
+                            <StatusBadge status={f.status} />
+                            <FreshnessBadge recheck={f.recheck} reason={f.recheckReason} />
+                            <ReviewBadge review={f.review} edited={f.edited} />
+                            {(f.evidence_origin === "self_reported" ||
+                              f.evidence_badge === "Self-reported") && (
+                              <SelfReportedBadge />
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {f.conflicting_source_id && (
+                              <span className="rounded-full border border-[#F1D7D2] bg-[#FFF1EE] px-2 py-0.5 font-mono text-[11px] font-semibold text-[#9B2D22]">
+                                Conflicts: {f.conflicting_source_id}
+                              </span>
+                            )}
+                            {f.source_id && (
+                              <span className="font-mono text-xs font-semibold text-[#64756F]">
+                                {f.source_id}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <p className="text-sm font-semibold text-[#001E2B]">{f.claim}</p>
+
+                        {(f.owner || f.deadline) && (
+                          <div className="flex flex-wrap gap-3 text-xs text-[#4A5F5B]">
+                            {f.owner && (
+                              <span>
+                                Owner: <strong className="text-[#001E2B]">{f.owner}</strong>
+                              </span>
+                            )}
+                            {f.deadline && (
+                              <span>
+                                Deadline: <strong className="text-[#001E2B]">{f.deadline}</strong>
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        {f.explanation && (
+                          <p className="text-xs text-[#4A5F5B]">{f.explanation}</p>
+                        )}
+
+                        {f.verbatim_excerpt && (
+                          <blockquote className="m-0 rounded-lg border border-[#E1ECE6] bg-white px-3 py-2 text-xs text-[#29483B]">
+                            “{f.verbatim_excerpt}”
+                          </blockquote>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  {filtered.length > 12 && (
+                    <div className="mt-4 flex items-center justify-between text-xs text-[#64756F]">
+                      <span>
+                        Showing {visibleFindings.length} of {filtered.length} findings
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowAllFindings((prev) => !prev)}
+                        className="font-semibold text-[#159B59] hover:underline"
+                      >
+                        {showAllFindings
+                          ? "Show fewer"
+                          : `Show all (${filtered.length})`}
+                      </button>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+          </section>
+        )}
+
         {/* Responsibilities */}
         <section className="dashboard-enter dashboard-delay-4 mb-8 rounded-3xl border border-[#DCE9E3] bg-white p-6 shadow-[0_8px_30px_rgba(15,75,48,0.04)] sm:p-7">
           <div className="flex items-start gap-4">
@@ -326,27 +616,54 @@ export default function OutgoingDashboard({ user, onNavigate }) {
                 Your Responsibilities
               </h2>
               <p className="mt-2 text-sm leading-6 text-[#71817B]">
-                Tasks and ownership information for the handover.
+                Tasks and ownership information extracted from project sources.
               </p>
             </div>
           </div>
 
-          <div className="mt-5 rounded-2xl border border-dashed border-[#DCE9E3] bg-[#F8FAF9] p-5 sm:p-6">
-            <div className="flex items-start gap-3">
-              <div className="rounded-xl bg-white p-2.5 text-[#82918B] shadow-sm">
-                <ListTodo size={18} />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-[#29483B]">
-                  Task information is not connected yet.
-                </p>
-                <p className="mt-1 text-sm leading-6 text-[#82918B]">
-                  Your assigned tasks and responsibilities will appear here
-                  after task records are connected to Sanchaya.
-                </p>
+          {taskAndBlockerFindings.length > 0 ? (
+            <ul className="mt-5 space-y-3">
+              {taskAndBlockerFindings.slice(0, 6).map((task) => (
+                <li
+                  key={task.id}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#DCE9E3] bg-[#F8FBFA] p-4"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[#3973C8]">
+                      <span>{task.category}</span>
+                      {task.owner && (
+                        <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-[#29483B] border border-[#DCE9E3]">
+                          Owner: {task.owner}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-sm font-semibold text-[#001E2B]">
+                      {task.claim}
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-[#DCE9E3] bg-white px-3 py-1 text-xs font-semibold text-[#4A5F5B]">
+                    {task.rawStatus || task.status}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="mt-5 rounded-2xl border border-dashed border-[#DCE9E3] bg-[#F8FAF9] p-5 sm:p-6">
+              <div className="flex items-start gap-3">
+                <div className="rounded-xl bg-white p-2.5 text-[#82918B] shadow-sm">
+                  <ListTodo size={18} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-[#29483B]">
+                    No reconstructed task or blocker findings yet.
+                  </p>
+                  <p className="mt-1 text-sm leading-6 text-[#82918B]">
+                    Connect task trackers in Stage 1 and ask your Team Leader to run Stage 2 Knowledge Reconstruction.
+                  </p>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </section>
 
         {/* Handover steps */}

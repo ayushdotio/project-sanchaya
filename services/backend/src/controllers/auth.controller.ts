@@ -9,6 +9,10 @@ import { JWTPayload, UserRole } from "../types/auth.types.js";
 export const AUTH_COOKIE_NAME = "token";
 
 const DEFAULT_COOKIE_MAX_AGE_MS = 3 * 60 * 60 * 1000;
+// Pre-computed bcrypt hash used when an account does not exist so login timing
+// stays uniform and prevents email enumeration via response latency.
+const DUMMY_BCRYPT_HASH =
+  "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
 
 const TIME_UNIT_MS: Record<string, number> = {
   ms: 1,
@@ -49,6 +53,13 @@ export const getAuthCookieOptions = (): CookieOptions => ({
   path: "/",
 });
 
+export const getClearAuthCookieOptions = (): CookieOptions => ({
+  httpOnly: true,
+  secure: env.NODE_ENV === "production",
+  sameSite: "lax",
+  path: "/",
+});
+
 /**
  * Signs a JWT for the authenticated user and attaches it as an HttpOnly cookie.
  */
@@ -63,6 +74,7 @@ const issueAuthTokenAndCookie = (
   };
 
   const token = jwt.sign(payload, env.JWT_SECRET, {
+    algorithm: "HS256",
     expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions["expiresIn"],
   });
 
@@ -161,12 +173,14 @@ const registerAsOutgoingController = async (
 
 const loginController = async (req: Request, res: Response): Promise<void> => {
   const { email, password } = req.body;
+  const normalizedEmail = String(email).trim().toLowerCase();
 
   // Explicitly select passwordHash which has select: false
-  const user = await User.findOne({ email: email.toLowerCase() }).select(
+  const user = await User.findOne({ email: normalizedEmail }).select(
     "+passwordHash",
   );
   if (!user) {
+    await bcrypt.compare(password, DUMMY_BCRYPT_HASH);
     res.status(401).json({
       success: false,
       error: "Invalid email or password",
@@ -200,9 +214,19 @@ const loginController = async (req: Request, res: Response): Promise<void> => {
   });
 };
 
+const logoutController = async (
+  _req: Request,
+  res: Response,
+): Promise<void> => {
+  res.clearCookie(AUTH_COOKIE_NAME, getClearAuthCookieOptions());
+  res.status(200).json({
+    success: true,
+    message: "Logged out successfully",
+  });
+};
+
 const getmeController = async (req: Request, res: Response): Promise<void> => {
-  // req.user is already populated and verified by authenticateToken middleware.
-  // No DB round-trip needed — userId, email, and role are in the JWT payload.
+  // req.user is already populated and synced with live DB role by authenticateToken.
   res.status(200).json({
     success: true,
     data: {
@@ -217,9 +241,9 @@ const forgotPasswordController = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
-  const { email } = req.body;
+  const normalizedEmail = String(req.body.email).trim().toLowerCase();
 
-  const user = await User.findOne({ email: email.toLowerCase() });
+  const user = await User.findOne({ email: normalizedEmail });
   if (user) {
     const resetToken = crypto.randomBytes(32).toString("hex");
     const hashedToken = crypto
@@ -279,6 +303,7 @@ const resetPasswordController = async (
   user.passwordChangedAt = new Date();
   await user.save();
 
+  res.clearCookie(AUTH_COOKIE_NAME, getClearAuthCookieOptions());
   res.status(200).json({
     success: true,
     message: "Password reset successfully. You may now log in.",
@@ -290,6 +315,7 @@ export {
   registerAsLeaderController,
   registerAsOutgoingController,
   loginController,
+  logoutController,
   getmeController,
   forgotPasswordController,
   resetPasswordController,

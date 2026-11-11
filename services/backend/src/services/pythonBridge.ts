@@ -96,18 +96,35 @@ type BridgeError = Error & { statusCode?: number };
 const DOCKER_SERVICE_HOSTS = new Set(["ai-engine", "analytics-service"]);
 
 export class PythonBridge {
-  private aiBaseUrl: string;
-  private analyticsBaseUrl: string;
+  private getAiBaseUrl(): string {
+    return (
+      process.env.VARAD_AI_SERVICE_URL ||
+      process.env.AI_SERVICE_URL ||
+      env.AI_SERVICE_URL
+    )
+      .trim()
+      .replace(/\/+$/, "");
+  }
 
-  constructor() {
-    this.aiBaseUrl = env.AI_SERVICE_URL;
-    this.analyticsBaseUrl = env.ANALYTICS_SERVICE_URL;
+  private getAnalyticsBaseUrl(): string {
+    return (
+      process.env.PRAKHAR_ANALYTICS_SERVICE_URL ||
+      process.env.ANALYTICS_SERVICE_URL ||
+      env.ANALYTICS_SERVICE_URL
+    )
+      .trim()
+      .replace(/\/+$/, "");
+  }
+
+  private buildServiceUrl(baseUrl: string, relativePath: string): string {
+    const cleanBase = baseUrl.replace(/\/+$/, "");
+    const cleanPath = relativePath.replace(/^\/+/, "");
+    return new URL(cleanPath, `${cleanBase}/`).toString();
   }
 
   private getInternalHeaders(): Record<string, string> {
-    return env.INTERNAL_API_TOKEN
-      ? { "X-Internal-Token": env.INTERNAL_API_TOKEN }
-      : {};
+    const token = (process.env.INTERNAL_API_TOKEN || env.INTERNAL_API_TOKEN || "").trim();
+    return token ? { "X-Internal-Token": token } : {};
   }
 
   private getLocalFallbackUrl(baseUrl: string): string | null {
@@ -172,8 +189,14 @@ export class PythonBridge {
       error?.message ||
       fallbackMessage;
 
+    const isTimeout =
+      !upstreamStatus &&
+      (error?.code === "ECONNABORTED" || error?.code === "ETIMEDOUT");
+
     if (!upstreamStatus && error?.code === "ECONNREFUSED") {
       message = `${serviceName} is not running (${message}). Start the microservice on its configured port or via Docker Compose.`;
+    } else if (isTimeout) {
+      message = `${serviceName} timed out while processing the request. Retry with fewer sources or try again shortly.`;
     }
 
     console.error(`[PythonBridge: ${serviceName} Error]`, message);
@@ -183,6 +206,8 @@ export class PythonBridge {
       err.statusCode = upstreamStatus;
     } else if (upstreamStatus && upstreamStatus >= 500) {
       err.statusCode = upstreamStatus === 503 ? 503 : 502;
+    } else if (isTimeout) {
+      err.statusCode = 504;
     } else {
       err.statusCode = 503;
     }
@@ -206,9 +231,9 @@ export class PythonBridge {
         payload.databaseName = options.databaseName;
       }
 
-      return await this.requestWithHostFallback(this.aiBaseUrl, async (base) => {
+      return await this.requestWithHostFallback(this.getAiBaseUrl(), async (base) => {
         const response = await axios.post<ExtractionResponse>(
-          `${base}/internal/extract-and-verify`,
+          this.buildServiceUrl(base, "internal/extract-and-verify"),
           payload,
           {
             headers: this.getInternalHeaders(),
@@ -234,9 +259,9 @@ export class PythonBridge {
     payload: EvidenceValidationPayload,
   ): Promise<EvidenceValidationResponse> {
     try {
-      return await this.requestWithHostFallback(this.aiBaseUrl, async (base) => {
+      return await this.requestWithHostFallback(this.getAiBaseUrl(), async (base) => {
         const response = await axios.post<EvidenceValidationResponse>(
-          `${base}/api/v1/evidence/validate`,
+          this.buildServiceUrl(base, "api/v1/evidence/validate"),
           payload,
           {
             headers: this.getInternalHeaders(),
@@ -263,9 +288,9 @@ export class PythonBridge {
     limit = 500,
   ): Promise<FreshnessScanResponse> {
     try {
-      return await this.requestWithHostFallback(this.aiBaseUrl, async (base) => {
+      return await this.requestWithHostFallback(this.getAiBaseUrl(), async (base) => {
         const response = await axios.post<FreshnessScanResponse>(
-          `${base}/api/v1/evidence/freshness/scan`,
+          this.buildServiceUrl(base, "api/v1/evidence/freshness/scan"),
           {
             projectId,
             max_age_days: maxAgeDays,
@@ -296,9 +321,9 @@ export class PythonBridge {
     conflictingValues?: string[],
   ): Promise<GapQuestionGenerationResponse> {
     try {
-      return await this.requestWithHostFallback(this.aiBaseUrl, async (base) => {
+      return await this.requestWithHostFallback(this.getAiBaseUrl(), async (base) => {
         const response = await axios.post<GapQuestionGenerationResponse>(
-          `${base}/api/v1/questions/generate`,
+          this.buildServiceUrl(base, "api/v1/questions/generate"),
           {
             topic,
             status,
@@ -325,9 +350,9 @@ export class PythonBridge {
    */
   async checkAiEngineHealth(): Promise<AIEngineHealthResponse> {
     try {
-      return await this.requestWithHostFallback(this.aiBaseUrl, async (base) => {
+      return await this.requestWithHostFallback(this.getAiBaseUrl(), async (base) => {
         const response = await axios.get<AIEngineHealthResponse>(
-          `${base}/health`,
+          this.buildServiceUrl(base, "health"),
           { timeout: 5000 },
         );
         return response.data;
@@ -347,10 +372,10 @@ export class PythonBridge {
   async checkAnalyticsHealth(): Promise<AnalyticsHealthResponse> {
     try {
       return await this.requestWithHostFallback(
-        this.analyticsBaseUrl,
+        this.getAnalyticsBaseUrl(),
         async (base) => {
           const response = await axios.get<AnalyticsHealthResponse>(
-            `${base}/health`,
+            this.buildServiceUrl(base, "health"),
             { timeout: 5000 },
           );
           return response.data;
@@ -373,10 +398,10 @@ export class PythonBridge {
   ): Promise<RiskAndReadinessResponse> {
     try {
       return await this.requestWithHostFallback(
-        this.analyticsBaseUrl,
+        this.getAnalyticsBaseUrl(),
         async (base) => {
           const response = await axios.post<RiskAndReadinessResponse>(
-            `${base}/internal/compute-risk-and-readiness`,
+            this.buildServiceUrl(base, "internal/compute-risk-and-readiness"),
             { projectId },
             {
               headers: this.getInternalHeaders(),
@@ -404,10 +429,10 @@ export class PythonBridge {
   ): Promise<AxiosResponse<Readable>> {
     try {
       return await this.requestWithHostFallback(
-        this.analyticsBaseUrl,
+        this.getAnalyticsBaseUrl(),
         async (base) => {
           return await axios.get<Readable>(
-            `${base}/internal/generate-pdf/${projectId}`,
+            this.buildServiceUrl(base, `internal/generate-pdf/${projectId}`),
             {
               headers: this.getInternalHeaders(),
               params: options?.allowDraft ? { allow_draft: true } : undefined,

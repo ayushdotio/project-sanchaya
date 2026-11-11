@@ -1,14 +1,20 @@
 import { client } from "./client.js";
 
 /**
- * Stage 5 Handover Report: fetch approved findings and self-reported answers.
+ * Stage 5 Handover Report: fetch approved findings, self-reported answers, and risk maps.
  */
 export async function getHandoverReport(projectId) {
   if (!projectId) {
-    return { project: null, findings: [], gapAnswers: [] };
+    return { project: null, findings: [], gapAnswers: [], riskMaps: [] };
   }
   const result = await client.get(`/projects/${encodeURIComponent(projectId)}/handover`);
-  return result.data || { project: null, findings: [], gapAnswers: [] };
+  const data = result.data || {};
+  return {
+    project: data.project || null,
+    findings: Array.isArray(data.findings) ? data.findings : [],
+    gapAnswers: Array.isArray(data.gapAnswers) ? data.gapAnswers : [],
+    riskMaps: Array.isArray(data.riskMaps) ? data.riskMaps : [],
+  };
 }
 
 /**
@@ -28,7 +34,9 @@ export async function downloadHandoverPdf(projectId, filename, { draft = false }
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  window.URL.revokeObjectURL(url);
+  window.setTimeout(() => {
+    window.URL.revokeObjectURL(url);
+  }, 1000);
   return true;
 }
 

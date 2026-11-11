@@ -444,29 +444,30 @@ export default function App() {
         />
       )}
 
-      {/* INCOMING MEMBER HANDOVER */}
-      {user?.role === "incoming" && activePage === "handover" && (
-        <MyHandover
-          projectId={selectedProjectId}
-          approved={approved}
-          title="Your Handover Report"
-          user={user}
-        />
-      )}
-
-      {/* TEAM MEMBER HANDOVER */}
-      {user?.role === "member" && activePage === "handover" && (
-        <MyHandover
-          projectId={selectedProjectId}
-          approved={approved}
-          title="Team Handover Report"
-          user={user}
-        />
-      )}
+      {/* STAGE 5 HANDOVER REPORT (LEADER, INCOMING, TEAM MEMBER) */}
+      {(user?.role === "leader" ||
+        user?.role === "incoming" ||
+        user?.role === "member" ||
+        user?.role === "team_member") &&
+        activePage === "handover" && (
+          <MyHandover
+            projectId={selectedProjectId}
+            approved={approved}
+            title={
+              user?.role === "leader"
+                ? "Final Handover Package"
+                : user?.role === "incoming"
+                  ? "Your Handover Report"
+                  : "Team Handover Report"
+            }
+            user={user}
+          />
+        )}
 
       {/* SOURCE UPLOAD PAGE */}
       {(user?.role === "leader" || user?.role === "outgoing") && activePage === "sources" && (
         <SourceUpload
+          user={user}
           onNavigate={handleNavigate}
           projectId={selectedProjectId}
         />

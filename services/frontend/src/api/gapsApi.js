@@ -11,10 +11,24 @@ export async function getUnresolvedGaps(projectId) {
 
 /**
  * Stage 4 Gap-to-Question Loop: fetch questions generated for a project.
+ * Optional filters: { status?: "pending"|"answered"|"approved", gap_category?: string }
  */
-export async function getGapQuestions(projectId) {
+export async function getGapQuestions(projectId, filters = {}) {
   if (!projectId) return [];
-  const result = await client.get(`/projects/${encodeURIComponent(projectId)}/gap-questions`);
+
+  const params = {};
+  if (filters && typeof filters === "object") {
+    if (filters.status && filters.status !== "all") {
+      params.status = filters.status;
+    }
+    if (filters.gap_category && filters.gap_category !== "all") {
+      params.gap_category = filters.gap_category;
+    }
+  }
+
+  const result = await client.get(`/projects/${encodeURIComponent(projectId)}/gap-questions`, {
+    params: Object.keys(params).length > 0 ? params : undefined,
+  });
   return Array.isArray(result.data) ? result.data : [];
 }
 
@@ -74,10 +88,22 @@ export async function evaluateReadiness(projectId) {
  */
 export async function signOffReadiness(projectId, options = {}) {
   if (!projectId) throw new Error("Project ID is required.");
-  const body =
-    options.checklistUpdates !== undefined || options.evaluateWithAnalytics !== undefined
-      ? options
-      : { checklistUpdates: options };
+  let body = {};
+  if (
+    options &&
+    (options.checklistUpdates !== undefined || options.evaluateWithAnalytics !== undefined)
+  ) {
+    body = {
+      ...(options.evaluateWithAnalytics !== undefined
+        ? { evaluateWithAnalytics: Boolean(options.evaluateWithAnalytics) }
+        : {}),
+      ...(options.checklistUpdates && Object.keys(options.checklistUpdates).length > 0
+        ? { checklistUpdates: options.checklistUpdates }
+        : {}),
+    };
+  } else if (options && Object.keys(options).length > 0) {
+    body = { checklistUpdates: options };
+  }
 
   const result = await client.post(
     `/projects/${encodeURIComponent(projectId)}/readiness/sign-off`,

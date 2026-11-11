@@ -7,14 +7,14 @@
 const rawApiUrl = (
   import.meta.env.VITE_API_BASE_URL ||
   import.meta.env.VITE_API_URL ||
-  "http://localhost:5000"
+  ""
 )
   .trim()
   .replace(/\/+$/, "");
 
-// ROOT_URL points to host root (e.g. "http://localhost:5000")
+// ROOT_URL points to host root ("" for same-origin Vercel / Vite proxy, or "https://api.example.com")
 const ROOT_URL = rawApiUrl.replace(/\/api\/?$/, "");
-// BASE_URL points to API root (e.g. "http://localhost:5000/api" or "/api")
+// BASE_URL points to API root ("/api" for same-origin Vercel / Vite proxy, or "https://api.example.com/api")
 const BASE_URL = ROOT_URL ? `${ROOT_URL}/api` : "/api";
 
 const TOKEN_KEY = "sanchaya_token";
@@ -89,7 +89,7 @@ export async function apiRequest(endpoint, options = {}) {
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  let fullUrl = "";
+  let fullUrl;
   if (endpoint.startsWith("http://") || endpoint.startsWith("https://")) {
     fullUrl = endpoint;
   } else if (endpoint === "/health" || endpoint === "health") {

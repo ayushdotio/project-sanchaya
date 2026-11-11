@@ -98,7 +98,12 @@ class Settings(BaseModel):
                 os.getenv("OPENROUTER_BASE_URL") or "https://openrouter.ai/api/v1"
             ).strip(),
             openrouter_site_url=(
-                os.getenv("OPENROUTER_SITE_URL") or "http://localhost:5173"
+                os.getenv("OPENROUTER_SITE_URL")
+                or (
+                    f"https://{os.getenv('VERCEL_PROJECT_PRODUCTION_URL') or os.getenv('VERCEL_URL')}"
+                    if (os.getenv("VERCEL_PROJECT_PRODUCTION_URL") or os.getenv("VERCEL_URL"))
+                    else "http://localhost:5173"
+                )
             ).strip(),
             openrouter_app_name=(
                 os.getenv("OPENROUTER_APP_NAME") or "Sanchaya AI Engine"

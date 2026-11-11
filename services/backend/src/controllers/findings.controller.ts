@@ -13,7 +13,9 @@ const syncDecisionChecklistAndApproval = async (
   invalidateApproval: boolean,
 ): Promise<void> => {
   const project = await Project.findById(projectId);
-  if (!project) return;
+  if (!project || !project.readinessChecklist || typeof project.save !== "function") {
+    return;
+  }
 
   const [totalDecisions, unverifiedDecisions] = await Promise.all([
     Finding.countDocuments({ projectId, category: "decision" }),
@@ -43,13 +45,57 @@ const syncDecisionChecklistAndApproval = async (
   await project.save();
 };
 
+const STATUS_QUERY_MAP: Record<string, string> = {
+  supported: "Supported",
+  needs_review: "Needs review",
+  "needs review": "Needs review",
+  conflicting: "Conflicting",
+  unknown: "Unknown",
+};
+
+const normalizeNullableText = (value: string | null | undefined): string | null | undefined => {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
 const inspectFindingsController = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
   const projectId = req.params.projectId as string;
+  const {
+    status,
+    verification_status,
+    category,
+    review_status,
+    source_id,
+    recheck,
+  } = ((req as any).validatedQuery || req.query || {}) as Record<string, string | undefined>;
 
-  const findings = await Finding.find({ projectId }).sort({ createdAt: -1 });
+  const filter: Record<string, any> = { projectId };
+  const rawStatus = verification_status || status;
+  if (rawStatus) {
+    filter.verification_status =
+      STATUS_QUERY_MAP[rawStatus.trim().toLowerCase()] || rawStatus;
+  }
+  if (category) {
+    filter.category = category;
+  }
+  if (review_status) {
+    filter.review_status = review_status;
+  }
+  if (source_id) {
+    filter.source_id = source_id;
+  }
+  if (recheck === "true") {
+    filter["freshness.recheck_recommended"] = true;
+  } else if (recheck === "false") {
+    filter["freshness.recheck_recommended"] = { $ne: true };
+  }
+
+  const findings = await Finding.find(filter).sort({ createdAt: -1 });
 
   res.status(200).json({
     success: true,
@@ -70,6 +116,7 @@ const leaderEditFindingsController = async (
     owner,
     deadline,
     rationale,
+    topic,
     reverify,
   } = req.body;
 
@@ -79,11 +126,26 @@ const leaderEditFindingsController = async (
     return;
   }
 
-  if (claim !== undefined) finding.claim = claim;
+  if (claim !== undefined) finding.claim = claim.trim();
   if (category !== undefined) finding.category = category;
-  if (owner !== undefined) finding.owner = owner;
-  if (deadline !== undefined) finding.deadline = deadline;
-  if (rationale !== undefined) finding.rationale = rationale;
+  if (owner !== undefined) finding.owner = normalizeNullableText(owner) ?? null;
+  if (deadline !== undefined) finding.deadline = normalizeNullableText(deadline) ?? null;
+  if (rationale !== undefined) finding.rationale = normalizeNullableText(rationale) ?? null;
+  if (topic !== undefined) finding.topic = normalizeNullableText(topic) ?? null;
+
+  const hasContentEdit =
+    claim !== undefined ||
+    category !== undefined ||
+    owner !== undefined ||
+    deadline !== undefined ||
+    rationale !== undefined ||
+    topic !== undefined;
+
+  if (hasContentEdit) {
+    finding.edited = true;
+    finding.editedBy = req.user!.userId as any;
+    finding.editedAt = new Date();
+  }
 
   if (reverify === true) {
     const validation = await pythonBridge.validateFindingEvidence({
@@ -100,9 +162,12 @@ const leaderEditFindingsController = async (
     finding.explanation = validation.explanation;
     finding.conflicting_source_id = validation.conflicting_source_id ?? null;
     finding.conflict_details = (validation.conflict_details as any) ?? null;
+    if (validation.freshness !== undefined) {
+      finding.freshness = (validation.freshness as any) ?? null;
+    }
   }
 
-  if (review_status) {
+  if (review_status !== undefined) {
     finding.review_status = review_status;
     finding.reviewedBy = req.user!.userId as any;
     finding.reviewedAt = new Date();
@@ -110,17 +175,14 @@ const leaderEditFindingsController = async (
 
   await finding.save();
 
-  const contentEdited =
-    claim !== undefined ||
-    category !== undefined ||
-    owner !== undefined ||
-    deadline !== undefined ||
-    rationale !== undefined ||
+  const shouldInvalidateApproval =
+    hasContentEdit ||
     reverify === true ||
-    review_status === "rejected";
+    review_status === "rejected" ||
+    review_status === "pending";
 
-  if (review_status === "approved" || contentEdited) {
-    await syncDecisionChecklistAndApproval(projectId, contentEdited);
+  if (review_status !== undefined || shouldInvalidateApproval) {
+    await syncDecisionChecklistAndApproval(projectId, shouldInvalidateApproval);
   }
 
   res.status(200).json({
@@ -158,7 +220,15 @@ const reverifyFindingController = async (
   finding.explanation = validation.explanation;
   finding.conflicting_source_id = validation.conflicting_source_id ?? null;
   finding.conflict_details = (validation.conflict_details as any) ?? null;
+  if (validation.freshness !== undefined) {
+    finding.freshness = (validation.freshness as any) ?? null;
+  }
   await finding.save();
+
+  await syncDecisionChecklistAndApproval(
+    projectId,
+    finding.verification_status !== "Supported" && finding.review_status !== "approved",
+  );
 
   res.status(200).json({
     success: true,
@@ -174,7 +244,7 @@ const scanFindingsFreshnessController = async (
   const projectId = req.params.projectId as string;
   const { maxAgeDays = 90, limit = 500 } = req.body || {};
 
-  const project = await Project.findById(projectId);
+  const project = (req as any).project || (await Project.findById(projectId));
   if (!project) {
     res.status(404).json({ success: false, error: "Project not found" });
     return;
@@ -257,7 +327,7 @@ const reconstructFindingsController = async (
     sourceTypes?: Array<"github" | "document" | "task">;
   };
 
-  const project = await Project.findById(projectId);
+  const project = (req as any).project || (await Project.findById(projectId));
   if (!project) {
     res.status(404).json({ success: false, error: "Project not found" });
     return;
@@ -266,6 +336,9 @@ const reconstructFindingsController = async (
   const sourceFilter: Record<string, any> = {
     projectId: project._id || projectId,
   };
+  const hasFilter =
+    (Array.isArray(sourceIds) && sourceIds.length > 0) ||
+    (Array.isArray(sourceTypes) && sourceTypes.length > 0);
   if (sourceIds && sourceIds.length > 0) {
     sourceFilter.source_id = { $in: sourceIds };
   }
@@ -280,8 +353,9 @@ const reconstructFindingsController = async (
   if (!sourceRecords || sourceRecords.length === 0) {
     res.status(400).json({
       success: false,
-      error:
-        "No ingested source records found for this project. Connect GitHub or upload notes/tasks before reconstructing.",
+      error: hasFilter
+        ? "No ingested source records matched the selected sourceIds/sourceTypes filter."
+        : "No ingested source records found for this project. Connect GitHub or upload notes/tasks before reconstructing.",
     });
     return;
   }
@@ -305,6 +379,10 @@ const reconstructFindingsController = async (
     sourceRecords: serializedSources,
     databaseName,
   });
+
+  if ((result.findingsCount ?? 0) > 0) {
+    await syncDecisionChecklistAndApproval(projectId, true);
+  }
 
   res.status(200).json({
     success: true,

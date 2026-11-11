@@ -5,7 +5,7 @@ import {
   requireProjectMembership,
   requireRoles,
 } from "../middlewares/authMiddleware.js";
-import { validateBody } from "../middlewares/validate.js";
+import { validateBody, validateParams, validateQuery } from "../middlewares/validate.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import {
   listUnresolvedGapsController,
@@ -15,8 +15,31 @@ import {
 
 const router = Router();
 
+const objectIdRegex = /^[0-9a-fA-F]{24}$/;
+
+const projectParamsSchema = z.object({
+  projectId: z.string().regex(objectIdRegex, "Invalid projectId format"),
+});
+
+const questionParamsSchema = z.object({
+  projectId: z.string().regex(objectIdRegex, "Invalid projectId format"),
+  questionId: z.string().regex(objectIdRegex, "Invalid questionId format"),
+});
+
+const gapQuestionsQuerySchema = z.object({
+  status: z.enum(["pending", "answered", "approved"]).optional(),
+  gap_category: z
+    .enum([
+      "missing_owner",
+      "missing_rationale",
+      "unknown_claim",
+      "conflicting_sources",
+    ])
+    .optional(),
+});
+
 const answerSchema = z.object({
-  answer: z.string().min(2, "Answer must contain at least 2 characters"),
+  answer: z.string().trim().min(2, "Answer must contain at least 2 characters"),
 });
 
 /**
@@ -37,6 +60,7 @@ router.get(
   authenticateToken,
   requireRoles(["leader", "outgoing"]),
   requireProjectMembership,
+  validateParams(projectParamsSchema),
   asyncHandler(listUnresolvedGapsController),
 );
 
@@ -55,6 +79,8 @@ router.get(
   authenticateToken,
   requireRoles(["leader", "outgoing"]),
   requireProjectMembership,
+  validateParams(projectParamsSchema),
+  validateQuery(gapQuestionsQuerySchema),
   asyncHandler(gapQuestionsController),
 );
 
@@ -78,6 +104,7 @@ router.post(
   authenticateToken,
   requireRoles(["outgoing"]),
   requireProjectMembership,
+  validateParams(questionParamsSchema),
   validateBody(answerSchema),
   asyncHandler(answerController),
 );

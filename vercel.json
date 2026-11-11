@@ -1,0 +1,59 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "ai-engine": {
+      "root": "services/ai-engine",
+      "framework": "fastapi",
+      "entrypoint": "main.py"
+    },
+    "analytics-service": {
+      "root": "services/analytics-service",
+      "framework": "fastapi",
+      "entrypoint": "main.py"
+    },
+    "backend": {
+      "root": "services/backend",
+      "framework": "express",
+      "entrypoint": "src/app.ts",
+      "bindings": [
+        {
+          "type": "service",
+          "service": "ai-engine",
+          "format": "url",
+          "env": "AI_SERVICE_URL"
+        },
+        {
+          "type": "service",
+          "service": "analytics-service",
+          "format": "url",
+          "env": "ANALYTICS_SERVICE_URL"
+        }
+      ]
+    },
+    "frontend": {
+      "root": "services/frontend",
+      "framework": "vite"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/health",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "frontend"
+      }
+    }
+  ]
+}
+

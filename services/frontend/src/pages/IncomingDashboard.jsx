@@ -12,11 +12,19 @@ import {
   Sparkles,
   Eye,
   ListChecks,
+  RefreshCw,
+  Download,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import ReadinessPanel from "@/components/dashboard/ReadinessPanel";
 import { getProjects } from "@/services/projectsApi";
-import { getFindings } from "@/api/findingsApi";
+import { getReadiness } from "@/api/gapsApi";
+import {
+  getHandoverReport,
+  getHandoverHistory,
+  downloadHandoverPdf,
+} from "@/api/handoverApi";
 
 export default function IncomingDashboard({
   user,
@@ -27,6 +35,12 @@ export default function IncomingDashboard({
   const [projects, setProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [projectFindings, setProjectFindings] = useState([]);
+  const [readinessData, setReadinessData] = useState(null);
+  const [handoverHistory, setHandoverHistory] = useState([]);
+  const [pollingReadiness, setPollingReadiness] = useState(false);
+  const [pollError, setPollError] = useState("");
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState("");
 
   useEffect(() => {
     getProjects()
@@ -40,27 +54,86 @@ export default function IncomingDashboard({
   }, []);
 
   useEffect(() => {
-    if (selectedProjectId) {
-      getFindings(selectedProjectId)
-        .then((items) => {
-          if (Array.isArray(items)) setProjectFindings(items);
-        })
-        .catch(() => {});
-    }
+    let active = true;
+    if (!selectedProjectId) return () => { active = false; };
+
+    getReadiness(selectedProjectId)
+      .then(async (readiness) => {
+        if (!active) return;
+        setReadinessData(readiness || null);
+        if (readiness?.readinessStatus === "Approved for Sharing") {
+          const [handover, history] = await Promise.all([
+            getHandoverReport(selectedProjectId).catch(() => null),
+            getHandoverHistory(selectedProjectId).catch(() => []),
+          ]);
+          if (active) {
+            setProjectFindings(Array.isArray(handover?.findings) ? handover.findings : []);
+            setHandoverHistory(Array.isArray(history) ? history : []);
+          }
+        } else {
+          setProjectFindings([]);
+          setHandoverHistory([]);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+    };
   }, [selectedProjectId]);
+
+  async function handlePollReadiness() {
+    if (!selectedProjectId) return;
+    setPollingReadiness(true);
+    setPollError("");
+    try {
+      const readiness = await getReadiness(selectedProjectId);
+      setReadinessData(readiness || null);
+      if (readiness?.readinessStatus === "Approved for Sharing") {
+        const [handover, history] = await Promise.all([
+          getHandoverReport(selectedProjectId).catch(() => null),
+          getHandoverHistory(selectedProjectId).catch(() => []),
+        ]);
+        setProjectFindings(Array.isArray(handover?.findings) ? handover.findings : []);
+        setHandoverHistory(Array.isArray(history) ? history : []);
+      }
+    } catch (err) {
+      console.warn("Readiness poll failed:", err);
+      setPollError(err.message || "Unable to check readiness status.");
+    } finally {
+      setPollingReadiness(false);
+    }
+  }
+
+  async function handleDownloadPdf() {
+    if (!selectedProjectId) return;
+    setDownloadingPdf(true);
+    setPdfError("");
+    try {
+      await downloadHandoverPdf(
+        selectedProjectId,
+        `sanchaya-handover-${activeProject?.name || selectedProjectId}.pdf`
+      );
+    } catch (err) {
+      console.warn("PDF download failed:", err);
+      setPdfError(err.message || "Failed to download official PDF.");
+    } finally {
+      setDownloadingPdf(false);
+    }
+  }
 
   const activeProject =
     projects.find((p) => (p._id || p.id) === selectedProjectId) || projects[0];
 
-  const hasApprovedProject = projects.some(
-    (p) => p.readinessStatus === "Approved for Sharing"
-  );
+  const isSelectedProjectApproved =
+    (readinessData?.readinessStatus || activeProject?.readinessStatus) ===
+    "Approved for Sharing";
 
-  // If approved items passed from parent, use them; otherwise use supported findings from project
+  // If approved items passed from parent, use them; otherwise use Stage 5 handover findings
   const effectiveApproved =
     approved.length > 0
       ? approved
-      : projectFindings.filter((f) => (f.status || f.verification_status || "").toLowerCase() === "supported" || f.review === "approved");
+      : projectFindings;
 
   const confirmed = effectiveApproved.filter(
     (finding) => (finding.status || finding.verification_status || "").toLowerCase() === "supported"
@@ -70,12 +143,12 @@ export default function IncomingDashboard({
     (finding) => (finding.status || finding.verification_status || "").toLowerCase() !== "supported"
   );
 
-  const ready = (shared && effectiveApproved.length > 0) || hasApprovedProject;
+  const ready = (shared && effectiveApproved.length > 0) || isSelectedProjectApproved;
 
   const stats = [
     {
       title: "Approved Findings",
-      value: approved.length,
+      value: effectiveApproved.length,
       description: "Information shared by your team leader",
       icon: FileText,
       theme: "blue",
@@ -260,10 +333,30 @@ export default function IncomingDashboard({
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2 px-6 py-4 text-xs text-[#82918B] sm:px-7">
-              <Clock size={14} />
-              Waiting for the Team Leader to complete the review.
+            <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 text-xs text-[#82918B] sm:px-7">
+              <span className="inline-flex items-center gap-2">
+                <Clock size={14} />
+                Current status: {readinessData?.readinessStatus || activeProject?.readinessStatus || "Needs Attention"}
+              </span>
+              {selectedProjectId && (
+                <button
+                  type="button"
+                  onClick={handlePollReadiness}
+                  disabled={pollingReadiness}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#DCE9E3] bg-white px-3 py-1.5 text-xs font-semibold text-[#24483A] hover:border-[#159B59] disabled:opacity-50"
+                >
+                  <RefreshCw size={12} className={pollingReadiness ? "animate-spin" : ""} />
+                  {pollingReadiness ? "Checking..." : "Check Readiness Status"}
+                </button>
+              )}
             </div>
+          </section>
+        )}
+
+        {/* Stage 4: Read-Only Readiness Status Polling */}
+        {selectedProjectId && readinessData && (
+          <section className="dashboard-enter dashboard-delay-3 mb-8">
+            <ReadinessPanel readiness={readinessData} isLeader={false} />
           </section>
         )}
 
@@ -392,16 +485,48 @@ export default function IncomingDashboard({
               ))}
             </div>
 
-            <Button
-              onClick={() => onNavigate("handover", selectedProjectId)}
-              disabled={!ready}
-              className="mt-6 h-11 gap-2 rounded-xl bg-[#159B59] px-5 text-white shadow-sm transition hover:bg-[#087A3D] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Eye size={17} />
-              Read Complete Handover
-              <ArrowRight size={17} />
-              <ArrowUpRight size={14} />
-            </Button>
+            <div className="mt-6 flex flex-wrap items-center gap-3">
+              <Button
+                onClick={() => onNavigate("handover", selectedProjectId)}
+                disabled={!ready}
+                className="h-11 gap-2 rounded-xl bg-[#159B59] px-5 text-white shadow-sm transition hover:bg-[#087A3D] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Eye size={17} />
+                Read Complete Handover
+                <ArrowRight size={17} />
+                <ArrowUpRight size={14} />
+              </Button>
+
+              {ready && (
+                <Button
+                  variant="outline"
+                  onClick={handleDownloadPdf}
+                  disabled={downloadingPdf}
+                  className="h-11 gap-2 rounded-xl border-[#D8E7DF] bg-white px-5 text-[#001E2B] hover:border-[#159B59]"
+                >
+                  <Download size={16} />
+                  {downloadingPdf ? "Downloading PDF..." : "Download Official PDF"}
+                </Button>
+              )}
+
+              {handoverHistory.some((h) => {
+                if (!h?.acknowledgedBy) return false;
+                const uid = user?.id || user?._id || user?.userId;
+                const ackId = h.acknowledgedBy._id || h.acknowledgedBy.id || h.acknowledgedBy;
+                return uid ? String(ackId) === String(uid) : true;
+              }) && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3.5 py-2 text-xs font-semibold text-[#087A3D] border border-[#CDE9D8]">
+                  <CheckCircle2 size={14} />
+                  Receipt Acknowledged
+                </span>
+              )}
+            </div>
+
+            {(pdfError || pollError) && (
+              <p className="mt-3 rounded-xl border border-[#F1D7D2] bg-[#FFF5F3] px-3.5 py-2 text-xs text-[#A33F32]">
+                {pdfError || pollError}
+              </p>
+            )}
           </div>
         </section>
 

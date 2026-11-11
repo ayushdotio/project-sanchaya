@@ -5,7 +5,7 @@ import {
   requireProjectMembership,
   requireRoles,
 } from "../middlewares/authMiddleware.js";
-import { validateBody } from "../middlewares/validate.js";
+import { validateBody, validateParams } from "../middlewares/validate.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import {
   readinessController,
@@ -16,19 +16,28 @@ import {
 
 const router = Router();
 
-const signOffSchema = z.object({
-  evaluateWithAnalytics: z.boolean().optional(),
-  checklistUpdates: z
-    .object({
-      sourcesVerified: z.boolean().optional(),
-      decisionsBackedByEvidence: z.boolean().optional(),
-      unfinishedTasksAssignedOrUnknown: z.boolean().optional(),
-      blockersIdentified: z.boolean().optional(),
-      conflictsDisclosed: z.boolean().optional(),
-      recipientPermissionsChecked: z.boolean().optional(),
-    })
-    .optional(),
+const objectIdRegex = /^[0-9a-fA-F]{24}$/;
+
+const projectParamsSchema = z.object({
+  projectId: z.string().regex(objectIdRegex, "Invalid projectId format"),
 });
+
+const signOffSchema = z
+  .object({
+    evaluateWithAnalytics: z.boolean().optional(),
+    checklistUpdates: z
+      .object({
+        sourcesVerified: z.boolean().optional(),
+        decisionsBackedByEvidence: z.boolean().optional(),
+        unfinishedTasksAssignedOrUnknown: z.boolean().optional(),
+        blockersIdentified: z.boolean().optional(),
+        conflictsDisclosed: z.boolean().optional(),
+        recipientPermissionsChecked: z.boolean().optional(),
+      })
+      .optional(),
+  })
+  .optional()
+  .default({});
 
 /**
  * @name : Get Readiness Status API
@@ -44,6 +53,7 @@ router.get(
   "/:projectId/readiness",
   authenticateToken,
   requireProjectMembership,
+  validateParams(projectParamsSchema),
   asyncHandler(readinessController),
 );
 
@@ -62,6 +72,7 @@ router.get(
   authenticateToken,
   requireRoles(["leader", "outgoing"]),
   requireProjectMembership,
+  validateParams(projectParamsSchema),
   asyncHandler(riskMapController),
 );
 
@@ -79,6 +90,7 @@ router.post(
   authenticateToken,
   requireRoles(["leader"]),
   requireProjectMembership,
+  validateParams(projectParamsSchema),
   asyncHandler(readinessEvaluateController),
 );
 
@@ -102,6 +114,7 @@ router.post(
   authenticateToken,
   requireRoles(["leader"]),
   requireProjectMembership,
+  validateParams(projectParamsSchema),
   validateBody(signOffSchema),
   asyncHandler(readinessSignOffController),
 );
