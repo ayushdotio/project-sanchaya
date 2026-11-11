@@ -1,0 +1,6 @@
+task_id,title,status,owner,deadline,blockers,description
+TSK-101,Migrate MongoDB connection string for staging,In Progress,Ayush,2026-11-20,Waiting on DevOps firewall rule for 192.168.10.42,"Update MONGO_URI=mongodb://demo_user:demo_pass@mongo:27017/sanchaya and rotate JWT_SECRET=sample_local_secret_9876"
+TSK-102,Rotate GitHub PAT for repository sync,Blocked,Varad,2026-11-18,Token ghp_1234567890abcdefghijklmnopqrstuvwxyz expired,"Generate new read-only token and notify dev.handover@example.com or +1-555-867-5309"
+TSK-103,Verify ImageKit folder permissions per project,Completed,Lokesh,2026-11-15,,"Confirmed uploads write to /sanchaya/<projectId> and incoming users receive 403"
+TSK-104,Finalize 7-point readiness checklist export,Pending,Prakhar,2026-11-25,Pending leader sign-off,"Verify ReportLab PDF generation includes self-reported gap badges"
+TSK-105,Archive legacy ingestion scripts,,,,,"Needs owner assignment during handover review"

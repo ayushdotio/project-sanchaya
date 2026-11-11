@@ -34,6 +34,9 @@ const envSchema = z.object({
   BCRYPT_SALT_ROUNDS: z.coerce.number().default(12),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
   GITHUB_GLOBAL_PAT: z.string().optional(),
+  IMAGEKIT_PUBLIC_KEY: z.string().optional(),
+  IMAGEKIT_PRIVATE_KEY: z.string().optional(),
+  IMAGEKIT_URL_ENDPOINT: z.string().optional(),
   // Support both canonical and legacy environment variable names
   AI_SERVICE_URL: z.string().url().default("http://ai-engine:8001"),
   ANALYTICS_SERVICE_URL: z.string().url().default("http://analytics-service:8002"),

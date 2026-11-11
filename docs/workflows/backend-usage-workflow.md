@@ -18,6 +18,7 @@ flowchart TD
     Stage1 --> GHConnect["POST .../github/connect"] --> GHSync["POST .../github/sync"]
     Stage1 --> UploadNotes["POST .../uploads/notes (/upload-document)"]
     Stage1 --> UploadTasks["POST .../uploads/tasks (/upload-tasks)"]
+    UploadNotes --> Docs["GET .../uploads/notes (/documents) -> GET .../uploads/notes/:fileId (/documents/:fileId)"]
     GHSync & UploadNotes & UploadTasks --> Sources["GET .../sources -> GET .../sources/:sourceId"]
 
     Sources --> Reconstruct["Stage 2: POST .../reconstruct (leader)"]
@@ -55,9 +56,11 @@ flowchart TD
      1. `POST /api/projects/:projectId/github/connect` (`{ repo, accessToken? }`) → verifies read-only access and saves `project.githubRepo`.
      2. `POST /api/projects/:projectId/github/sync` (`{ githubRepo?, token? }`) → fetches commits/PRs/issues, runs `scanAndRedact`, upserts `SRC-GH-*` records, and marks `readinessChecklist.sourcesVerified = true`.
    - **File uploads (`multipart/form-data`, field `"file"`):**
-     - `POST /api/projects/:projectId/uploads/notes` (aliased at `/upload-document`) → ingests `.pdf`, `.docx`, or `.txt` as `SRC-DOC-*`.
+     - `POST /api/projects/:projectId/uploads/notes` (aliased at `/upload-document`) → extracts text from `.pdf`, `.docx`, or `.txt`, runs `scanAndRedact`, uploads the document to ImageKit in `/sanchaya/<projectId>`, and persists a `SRC-DOC-*` `SourceRecord` with ImageKit metadata (`url`, `fileId`, `filePath`), returning `{ id, source_id, origin, redactionCount, fileId, fileUrl, filePath, created_at }`.
      - `POST /api/projects/:projectId/uploads/tasks` (aliased at `/upload-tasks`) → ingests `.csv` as `SRC-TSK-*`.
-   - **Inspect ingested records:**
+   - **Fetch stored documents (ImageKit) & inspect ingested records:**
+     - `GET /api/projects/:projectId/uploads/notes` (aliased at `/documents`) → lists document files stored in `/sanchaya/<projectId>/` on ImageKit.
+     - `GET /api/projects/:projectId/uploads/notes/:fileId` (aliased at `/documents/:fileId`) → fetches metadata and delivery URL for a single document on ImageKit (enforces `/sanchaya/<projectId>/` folder isolation; returns `404` otherwise).
      - `GET /api/projects/:projectId/sources` (optional `?type=github|document|task`) → returns metadata and canonical `source_id`s without large `redacted_content` blobs.
      - `GET /api/projects/:projectId/sources/:sourceId` → fetches the full `SourceRecord` including `redacted_content`.
 
@@ -91,7 +94,7 @@ flowchart TD
 1. **Authenticate & Locate Project**
    - `POST /api/auth/login` → `GET /api/projects` (obtain `:projectId`) → `GET /api/projects/:projectId`.
 2. **Stage 1 — Connect Sources**
-   - Same Stage 1 access as leader: `POST .../github/connect`, `POST .../github/sync`, `POST .../uploads/notes` (`/upload-document`), `POST .../uploads/tasks` (`/upload-tasks`), `GET .../sources`, and `GET .../sources/:sourceId`.
+   - Same Stage 1 access as leader: `POST .../github/connect`, `POST .../github/sync`, `POST .../uploads/notes` (`/upload-document`), `POST .../uploads/tasks` (`/upload-tasks`), `GET .../uploads/notes` (`/documents`), `GET .../uploads/notes/:fileId` (`/documents/:fileId`), `GET .../sources`, and `GET .../sources/:sourceId`.
 3. **Stage 2–4 — Inspect Findings & Close Knowledge Gaps**
    - Read-only inspection: `GET .../risk-map`, `GET .../findings`, and `GET .../readiness`.
    - Answer targeted gap questions (exclusive to `"outgoing"`):
@@ -106,7 +109,7 @@ flowchart TD
 
 1. **Authenticate & Poll Readiness**
    - `POST /api/auth/register` (or `POST /api/auth/login`) → `GET /api/projects` → `GET /api/projects/:projectId` → `GET /api/projects/:projectId/readiness`.
-   - **Hard Isolation Gate:** All Stages 1–4 routes (`/github/*`, `/uploads/*`, `/sources*`, `/reconstruct`, `/risk-map`, `/findings*`, `/gaps`, `/gap-questions*`) return `403 Forbidden`. Stage 5 `/handover*` routes also return `403 Forbidden` until `readinessStatus === "Approved for Sharing"`.
+   - **Hard Isolation Gate:** All Stages 1–4 routes (`/github/*`, `/uploads/*`, `/documents*`, `/sources*`, `/reconstruct`, `/risk-map`, `/findings*`, `/gaps`, `/gap-questions*`) return `403 Forbidden`. Stage 5 `/handover*` routes also return `403 Forbidden` until `readinessStatus === "Approved for Sharing"`.
 2. **Stage 5 — Consume, Export & Acknowledge Handover**
    - Once `readinessStatus` is `"Approved for Sharing"`:
      1. `GET /api/projects/:projectId/handover` → read approved findings and `Self-reported` gap answers.
@@ -142,7 +145,9 @@ flowchart TD
 | Workspace | `POST /api/projects/:projectId/members` | `leader` | Assign `outgoingIds` and `incomingIds` |
 | Stage 1 | `POST /api/projects/:projectId/github/connect` | `leader`, `outgoing` | Verify & bind GitHub repo |
 | Stage 1 | `POST /api/projects/:projectId/github/sync` | `leader`, `outgoing` | Ingest commits/PRs/issues with redaction |
-| Stage 1 | `POST /api/projects/:projectId/uploads/notes` (`/upload-document`) | `leader`, `outgoing` | Ingest PDF/DOCX/TXT notes with redaction |
+| Stage 1 | `POST /api/projects/:projectId/uploads/notes` (`/upload-document`) | `leader`, `outgoing` | Ingest PDF/DOCX/TXT notes with redaction & store in ImageKit `/sanchaya/<projectId>` |
+| Stage 1 | `GET /api/projects/:projectId/uploads/notes` (`/documents`) | `leader`, `outgoing` | List documents stored in ImageKit `/sanchaya/<projectId>/` |
+| Stage 1 | `GET /api/projects/:projectId/uploads/notes/:fileId` (`/documents/:fileId`) | `leader`, `outgoing` | Fetch single ImageKit document details & URL (folder-scoped) |
 | Stage 1 | `POST /api/projects/:projectId/uploads/tasks` (`/upload-tasks`) | `leader`, `outgoing` | Ingest CSV task tracker with redaction |
 | Stage 1 | `GET /api/projects/:projectId/sources` | `leader`, `outgoing` | List `SRC-*` records (without blobs) |
 | Stage 1 | `GET /api/projects/:projectId/sources/:sourceId` | `leader`, `outgoing` | Get single `SRC-*` record with `redacted_content` |

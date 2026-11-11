@@ -11,6 +11,8 @@ import {
   uploadTasksController,
   getSourcesController,
   fetchSourceDetailsController,
+  listProjectDocsController,
+  fetchProjectDocController,
 } from "../controllers/uploads.controller.js";
 
 const router = Router();
@@ -34,9 +36,10 @@ const generateCanonicalId = (prefix: "SRC-DOC" | "SRC-TSK"): string => {
  *      via `Project.findById(projectId)` (`404 Not Found` if missing).
  *   3. Extracts raw text via `extractDocumentText(file.buffer, file.originalname)` and runs deterministic
  *      Pre-AI redaction via `scanAndRedact(rawText)` before any persistence.
- *   4. Assigns a canonical `SRC-DOC-<6-hex-chars>` `source_id` and persists a `SourceRecord` (`source_type: "document"`)
- *      with `redacted_content`, `metadata` (`redactionCount`, `author`), and `created_at` / `updated_at` / `imported_at`.
- *   5. Responds with `201 Created` containing `{ success: true, message, data: { id, source_id, origin, redactionCount, created_at } }`.
+ *   4. Uploads the document to ImageKit in `/sanchaya/<projectId>` via `storageService.uploadDocument(...)`.
+ *   5. Assigns a canonical `SRC-DOC-<6-hex-chars>` `source_id` and persists a `SourceRecord` (`source_type: "document"`)
+ *      with `redacted_content`, `metadata` (`redactionCount`, `author`, `url`, `fileId`, `filePath`), and `created_at` / `updated_at` / `imported_at`.
+ *   6. Responds with `201 Created` containing `{ success: true, message, data: { id, source_id, origin, redactionCount, fileId, fileUrl, filePath, created_at } }`.
  */
 router.post(
   ["/:projectId/uploads/notes", "/:projectId/upload-document"],
@@ -44,6 +47,32 @@ router.post(
   requireRoles(["leader", "outgoing"]),
   upload.single("file"),
   asyncHandler(uploadNotesController),
+);
+
+/**
+ * @name : List Project Documents (ImageKit) API
+ * @route : GET /api/projects/:projectId/uploads/notes (aliased with /documents)
+ * @access : Protected (requires valid JWT via `authenticateToken` and role `"leader"` or `"outgoing"` via `requireRoles`; `"incoming"` receives `403`)
+ * @description : Fetches all document files stored in `/sanchaya/<projectId>/` on ImageKit.
+ */
+router.get(
+  ["/:projectId/uploads/notes", "/:projectId/documents"],
+  authenticateToken,
+  requireRoles(["leader", "outgoing"]),
+  asyncHandler(listProjectDocsController),
+);
+
+/**
+ * @name : Fetch Single Project Document (ImageKit) API
+ * @route : GET /api/projects/:projectId/uploads/notes/:fileId (aliased with /documents/:fileId)
+ * @access : Protected (requires valid JWT via `authenticateToken` and role `"leader"` or `"outgoing"` via `requireRoles`; `"incoming"` receives `403`)
+ * @description : Fetches metadata and delivery URL for a document in `/sanchaya/<projectId>/` on ImageKit by `fileId`.
+ */
+router.get(
+  ["/:projectId/uploads/notes/:fileId", "/:projectId/documents/:fileId"],
+  authenticateToken,
+  requireRoles(["leader", "outgoing"]),
+  asyncHandler(fetchProjectDocController),
 );
 
 /**
