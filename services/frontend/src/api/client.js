@@ -4,12 +4,18 @@
  * cookies (credentials: "include") and Authorization Bearer headers.
  */
 
-const BASE_URL =
+const rawApiUrl = (
   import.meta.env.VITE_API_BASE_URL ||
   import.meta.env.VITE_API_URL ||
-  "http://localhost:5000/api";
+  "http://localhost:5000"
+)
+  .trim()
+  .replace(/\/+$/, "");
 
-const ROOT_URL = BASE_URL.replace(/\/api\/?$/, "");
+// ROOT_URL points to host root (e.g. "http://localhost:5000")
+const ROOT_URL = rawApiUrl.replace(/\/api\/?$/, "");
+// BASE_URL points to API root (e.g. "http://localhost:5000/api" or "/api")
+const BASE_URL = ROOT_URL ? `${ROOT_URL}/api` : "/api";
 
 const TOKEN_KEY = "sanchaya_token";
 const USER_KEY = "sanchaya_user";
@@ -84,13 +90,18 @@ export async function apiRequest(endpoint, options = {}) {
   }
 
   let fullUrl = "";
-  if (endpoint.startsWith("http")) {
+  if (endpoint.startsWith("http://") || endpoint.startsWith("https://")) {
     fullUrl = endpoint;
   } else if (endpoint === "/health" || endpoint === "health") {
-    fullUrl = `${ROOT_URL}/health`;
+    fullUrl = ROOT_URL ? `${ROOT_URL}/health` : "/health";
   } else {
     const cleanPath = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
-    fullUrl = `${BASE_URL}${cleanPath}`;
+    // If cleanPath already begins with /api/, mount onto ROOT_URL to prevent duplicate /api/api/...
+    if (cleanPath.startsWith("/api/")) {
+      fullUrl = ROOT_URL ? `${ROOT_URL}${cleanPath}` : cleanPath;
+    } else {
+      fullUrl = `${BASE_URL}${cleanPath}`;
+    }
   }
 
   if (options.params && typeof options.params === "object") {

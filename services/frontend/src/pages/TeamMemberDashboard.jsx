@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   Activity,
   CheckCircle2,
@@ -15,6 +16,10 @@ import {
 
 import { Button } from "@/components/ui/button";
 import RecentActivity from "@/components/dashboard/RecentActivity";
+import { getProjects } from "@/services/projectsApi";
+import { getFindings } from "@/api/findingsApi";
+import { getProjectSources } from "@/api/sourcesApi";
+import { getHandoverHistory } from "@/api/handoverApi";
 
 export default function TeamMemberDashboard({
   user,
@@ -22,18 +27,67 @@ export default function TeamMemberDashboard({
   shared,
   onNavigate,
 }) {
-  const confirmed = approved.filter(
-    (f) => f.status === "supported"
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [projectFindings, setProjectFindings] = useState([]);
+  const [projectSources, setProjectSources] = useState([]);
+  const [historyData, setHistoryData] = useState([]);
+
+  useEffect(() => {
+    getProjects()
+      .then((list) => {
+        setProjects(list || []);
+        if (list && list.length > 0) {
+          setSelectedProjectId(list[0]._id || list[0].id);
+        }
+      })
+      .catch((err) => console.warn("Could not load member projects:", err));
+  }, []);
+
+  useEffect(() => {
+    if (selectedProjectId) {
+      Promise.all([
+        getFindings(selectedProjectId).catch(() => []),
+        getProjectSources(selectedProjectId).catch(() => []),
+        getHandoverHistory(selectedProjectId).catch(() => []),
+      ]).then(([findings, sources, history]) => {
+        if (Array.isArray(findings)) setProjectFindings(findings);
+        if (Array.isArray(sources)) setProjectSources(sources);
+        if (Array.isArray(history)) setHistoryData(history);
+      });
+    }
+  }, [selectedProjectId]);
+
+  const activeProject =
+    projects.find((p) => (p._id || p.id) === selectedProjectId) || projects[0];
+
+  const hasApprovedProject = projects.some(
+    (p) => p.readinessStatus === "Approved for Sharing"
   );
 
-  const followUp = approved.filter(
-    (f) => f.status !== "supported"
+  const effectiveApproved =
+    approved.length > 0
+      ? approved
+      : projectFindings.filter(
+          (f) =>
+            (f.status || f.verification_status || "").toLowerCase() ===
+              "supported" || f.review === "approved"
+        );
+
+  const confirmed = effectiveApproved.filter(
+    (f) => (f.status || f.verification_status || "").toLowerCase() === "supported"
   );
+
+  const followUp = effectiveApproved.filter(
+    (f) => (f.status || f.verification_status || "").toLowerCase() !== "supported"
+  );
+
+  const isShared = shared || hasApprovedProject;
 
   const cards = [
     {
       title: "Shared Findings",
-      value: approved.length,
+      value: effectiveApproved.length,
       description: "Information approved by the leader",
       icon: FileText,
       color: "blue",
@@ -103,15 +157,30 @@ export default function TeamMemberDashboard({
                   ACTIVE PROJECT
                 </div>
                 <h2 className="text-2xl font-bold tracking-tight text-[#001E2B] sm:text-3xl">
-                  Sanchaya
+                  {activeProject?.name || "Sanchaya"}
                 </h2>
                 <p className="mt-2 text-sm text-[#71817B]">
-                  Preserving Knowledge. Connecting People. Continuing Projects.
+                  {activeProject?.description || "Preserving Knowledge. Connecting People. Continuing Projects."}
                 </p>
               </div>
 
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-[#D8EEE1] bg-[#EFF9F3] text-[#159B59]">
-                <FolderKanban size={26} />
+              <div className="flex items-center gap-3">
+                {projects.length > 1 && (
+                  <select
+                    value={selectedProjectId}
+                    onChange={(e) => setSelectedProjectId(e.target.value)}
+                    className="rounded-xl border border-[#D8E7DF] bg-[#F8FCF9] px-3 py-2 text-xs font-semibold text-[#29483B] outline-none"
+                  >
+                    {projects.map((p) => (
+                      <option key={p._id || p.id} value={p._id || p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-[#D8EEE1] bg-[#EFF9F3] text-[#159B59]">
+                  <FolderKanban size={26} />
+                </div>
               </div>
             </div>
 
@@ -125,10 +194,10 @@ export default function TeamMemberDashboard({
               <span className="inline-flex items-center gap-2">
                 <span
                   className={`h-2 w-2 rounded-full ${
-                    shared ? "bg-[#159B59]" : "bg-[#D99A35]"
+                    isShared ? "bg-[#159B59]" : "bg-[#D99A35]"
                   }`}
                 />
-                {shared ? "Handover available" : "Waiting for team leader"}
+                {isShared ? "Handover available" : "Waiting for team leader"}
               </span>
             </div>
           </div>
@@ -204,12 +273,12 @@ export default function TeamMemberDashboard({
           </div>
 
           <div className="p-6 sm:p-7">
-            {shared ? (
+            {isShared ? (
               <>
                 <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-[#DCEFE3] bg-[#F4FAF6] p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="text-sm font-semibold text-[#29483B]">
-                      {approved.length} findings have been shared with the team.
+                      {effectiveApproved.length} findings have been shared with the team.
                     </p>
                     <p className="mt-1 text-xs text-[#82918B]">
                       Open the handover to review the project information.
@@ -222,7 +291,7 @@ export default function TeamMemberDashboard({
                 </div>
 
                 <Button
-                  onClick={() => onNavigate("handover")}
+                  onClick={() => onNavigate("handover", selectedProjectId)}
                   className="h-11 gap-2 rounded-xl bg-[#159B59] px-5 text-white shadow-sm transition hover:bg-[#087A3D]"
                 >
                   Read Team Handover
@@ -263,7 +332,11 @@ export default function TeamMemberDashboard({
               Keep track of recent project activity and updates.
             </p>
           </div>
-          <RecentActivity />
+          <RecentActivity
+            findings={projectFindings}
+            sources={projectSources}
+            history={historyData}
+          />
         </section>
 
         {/* Next actions */}
@@ -311,11 +384,9 @@ export default function TeamMemberDashboard({
 
         <footer className="mt-8 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-[11px] text-[#91A099]">
           <ListChecks size={12} />
-          Demonstration dashboard
+          Team Member Workspace
           <span>·</span>
-          Sample activity
-          <span>·</span>
-          Backend integration pending
+          Connected to Sanchaya backend
         </footer>
       </div>
 

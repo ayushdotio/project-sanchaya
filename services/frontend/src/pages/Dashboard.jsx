@@ -56,7 +56,11 @@ export default function Dashboard({
   shared,
   approvedCount,
 }) {
-  const [data, setData] = useState(null);
+  const [data, setData] = useState({
+    stats: { total: 0, supported: 0, needsReview: 0, conflicting: 0, unknown: 0 },
+    activities: [],
+    contribution: [],
+  });
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -99,6 +103,48 @@ export default function Dashboard({
   const [memberActionMessage, setMemberActionMessage] = useState("");
   const [memberActionError, setMemberActionError] = useState("");
   const [updatingRoleId, setUpdatingRoleId] = useState("");
+
+  const computedStats = useMemo(() => {
+    if (projectFindings && projectFindings.length > 0) {
+      const counts = { total: projectFindings.length, supported: 0, needsReview: 0, conflicting: 0, unknown: 0 };
+      projectFindings.forEach((f) => {
+        const s = (f.status || f.verification_status || "").toLowerCase();
+        if (s === "supported") counts.supported++;
+        else if (s === "needs_review" || s === "needsreview") counts.needsReview++;
+        else if (s === "conflicting") counts.conflicting++;
+        else counts.unknown++;
+      });
+      return counts;
+    }
+    return data?.stats || { total: 0, supported: 0, needsReview: 0, conflicting: 0, unknown: 0 };
+  }, [projectFindings, data]);
+
+  const stats = [
+    {
+      title: "Total Findings",
+      value: computedStats.total,
+      description: "All reconstructed findings",
+      type: "total",
+    },
+    {
+      title: "Supported",
+      value: computedStats.supported,
+      description: "Evidence-backed findings",
+      type: "supported",
+    },
+    {
+      title: "Needs Review",
+      value: computedStats.needsReview,
+      description: "Awaiting verification",
+      type: "review",
+    },
+    {
+      title: "Conflicting",
+      value: computedStats.conflicting,
+      description: "Conflicting evidence",
+      type: "conflicting",
+    },
+  ];
 
   async function loadProjectSubresources(projectId) {
     if (!projectId) return;
@@ -395,61 +441,6 @@ export default function Dashboard({
     }
   }
 
-  if (loading && !data) {
-    return (
-      <main className="min-h-[70vh] bg-[#F6FAF8] px-5 py-20">
-        <div className="mx-auto max-w-7xl rounded-3xl border border-[#E1ECE6] bg-white px-6 py-16 text-center shadow-sm">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#E8F8EF]">
-            <RefreshCw
-              className="animate-spin text-[#159B59]"
-              size={25}
-            />
-          </div>
-
-          <h2 className="text-lg font-semibold text-[#001E2B]">
-            Preparing your workspace
-          </h2>
-
-          <p className="mt-2 text-sm text-[#71817B]">
-            Loading Team Leader Dashboard...
-          </p>
-        </div>
-      </main>
-    );
-  }
-
-  if (!data) {
-    return (
-      <main className="min-h-[70vh] bg-[#F6FAF8] px-5 py-16">
-        <div className="mx-auto max-w-xl rounded-3xl border border-[#E1ECE6] bg-white p-10 text-center shadow-sm">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FFF3E8]">
-            <AlertTriangle
-              className="text-[#C47732]"
-              size={25}
-            />
-          </div>
-
-          <h2 className="mt-4 text-xl font-bold text-[#001E2B]">
-            Dashboard data unavailable
-          </h2>
-
-          <p className="mt-2 text-sm leading-6 text-[#71817B]">
-            We could not load the workspace information.
-            Please try again.
-          </p>
-
-          <Button
-            onClick={loadDashboard}
-            className="mt-6 gap-2 rounded-xl bg-[#159B59] px-5 text-white hover:bg-[#087A3D]"
-          >
-            <RefreshCw size={16} />
-            Try Again
-          </Button>
-        </div>
-      </main>
-    );
-  }
-
   if (user?.role !== "leader") {
     return (
       <main className="min-h-[70vh] bg-[#F6FAF8] px-5 py-16 sm:px-8">
@@ -559,10 +550,108 @@ export default function Dashboard({
               </section>
 
               <section className="rounded-3xl border border-[#D8EADF] bg-white p-6 shadow-sm sm:p-8">
-                <div className="mb-5 flex items-center gap-2">
-                  <Users size={19} className="text-[#159B59]" />
-                  <h2 className="text-xl font-bold text-[#001E2B]">Project Members</h2>
+                <div className="mb-5 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                  <div className="flex items-center gap-2">
+                    <Users size={19} className="text-[#159B59]" />
+                    <h2 className="text-xl font-bold text-[#001E2B]">Project Members</h2>
+                  </div>
+                  {user?.role === "leader" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowMemberManagement((prev) => !prev)}
+                      className="gap-1.5 rounded-xl border-[#D8E7DF] bg-white text-xs font-semibold text-[#24483A] hover:border-[#159B59]"
+                    >
+                      <Users size={14} />
+                      {showMemberManagement ? "Hide Member Controls" : "Manage Members & Roles"}
+                    </Button>
+                  )}
                 </div>
+
+                {memberActionMessage && (
+                  <div className="mb-4 flex items-center gap-2 rounded-xl border border-[#CDE9D8] bg-[#EAF8EF] p-3 text-sm text-[#087A3D]">
+                    <CheckCircle2 size={16} className="shrink-0" />
+                    <span>{memberActionMessage}</span>
+                  </div>
+                )}
+
+                {memberActionError && (
+                  <div className="mb-4 flex items-start gap-2 rounded-xl border border-[#F1D7D2] bg-[#FFF5F3] p-3 text-sm text-[#A33F32]">
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                    <span>{memberActionError}</span>
+                  </div>
+                )}
+
+                {/* Member Assignment Form for Team Leader */}
+                {showMemberManagement && user?.role === "leader" && (
+                  <form
+                    onSubmit={handleAssignMembers}
+                    className="mb-6 rounded-2xl border border-[#D8EADF] bg-[#F8FCF9] p-5 text-sm"
+                  >
+                    <h3 className="mb-3 text-sm font-bold text-[#001E2B]">
+                      Assign Team Members to Project
+                    </h3>
+                    <p className="mb-4 text-xs text-[#71817B]">
+                      Provide user IDs to assign outgoing and incoming handover participants.
+                    </p>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold text-[#29483B]">
+                          Outgoing Member User IDs (comma-separated)
+                        </label>
+                        <input
+                          type="text"
+                          value={outgoingInput}
+                          onChange={(e) => setOutgoingInput(e.target.value)}
+                          placeholder="e.g. 660f..., 660e..."
+                          className="h-10 w-full rounded-xl border border-[#D8E7DF] bg-white px-3 text-xs outline-none focus:border-[#159B59]"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold text-[#29483B]">
+                          Incoming Member User IDs (comma-separated)
+                        </label>
+                        <input
+                          type="text"
+                          value={incomingInput}
+                          onChange={(e) => setIncomingInput(e.target.value)}
+                          placeholder="e.g. 660d..., 660c..."
+                          className="h-10 w-full rounded-xl border border-[#D8E7DF] bg-white px-3 text-xs outline-none focus:border-[#159B59]"
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-4 flex gap-2">
+                      <Button
+                        type="submit"
+                        disabled={assigningMembers || (!outgoingInput.trim() && !incomingInput.trim())}
+                        className="gap-2 rounded-xl bg-[#159B59] text-xs text-white hover:bg-[#087A3D]"
+                      >
+                        {assigningMembers ? (
+                          <>
+                            <Loader2 size={14} className="animate-spin" /> Saving...
+                          </>
+                        ) : (
+                          <>
+                            <Users size={14} /> Assign Members
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          setOutgoingInput("");
+                          setIncomingInput("");
+                          setShowMemberManagement(false);
+                        }}
+                        className="rounded-xl border-[#D8E7DF] text-xs text-[#71817B]"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </form>
+                )}
+
                 <div className="grid gap-4 sm:grid-cols-3">
                   <div className="rounded-2xl bg-[#F8FCF9] p-4">
                     <p className="text-xs font-semibold uppercase tracking-wide text-[#82918B]">Team Leader</p>
@@ -574,12 +663,31 @@ export default function Dashboard({
                     <p className="text-xs font-semibold uppercase tracking-wide text-[#82918B]">Outgoing Members</p>
                     <p className="mt-2 text-2xl font-bold text-[#001E2B]">{outgoingMembers.length}</p>
                     {outgoingMembers.length > 0 && (
-                      <ul className="mt-2 space-y-1 text-sm text-[#64756F]">
-                        {outgoingMembers.map((member, index) => (
-                          <li key={member?._id || member?.id || index} className="break-all">
-                            {displayMember(member)}
-                          </li>
-                        ))}
+                      <ul className="mt-3 space-y-2 text-sm text-[#64756F]">
+                        {outgoingMembers.map((member, index) => {
+                          const mId = typeof member === "string" ? member : member?._id || member?.id;
+                          return (
+                            <li key={mId || index} className="rounded-xl border border-[#E1ECE6] bg-white p-2.5">
+                              <p className="break-all font-medium text-[#29483B]">{displayMember(member)}</p>
+                              {user?.role === "leader" && mId && (
+                                <div className="mt-2 flex items-center justify-between gap-2 border-t border-[#F0F5F2] pt-2 text-xs">
+                                  <span className="text-[11px] text-[#82918B]">Role:</span>
+                                  <select
+                                    value={member?.role || "outgoing"}
+                                    onChange={(e) => handleUpdateMemberRole(mId, e.target.value)}
+                                    disabled={updatingRoleId === mId || mId === user?.id || mId === user?.userId}
+                                    className="rounded-lg border border-[#D8E7DF] bg-[#F8FCF9] px-2 py-0.5 text-xs text-[#29483B] outline-none"
+                                  >
+                                    <option value="outgoing">Outgoing</option>
+                                    <option value="incoming">Incoming</option>
+                                    <option value="member">Member</option>
+                                    <option value="leader">Leader</option>
+                                  </select>
+                                </div>
+                              )}
+                            </li>
+                          );
+                        })}
                       </ul>
                     )}
                   </div>
@@ -587,12 +695,31 @@ export default function Dashboard({
                     <p className="text-xs font-semibold uppercase tracking-wide text-[#82918B]">Incoming Members</p>
                     <p className="mt-2 text-2xl font-bold text-[#001E2B]">{incomingMembers.length}</p>
                     {incomingMembers.length > 0 && (
-                      <ul className="mt-2 space-y-1 text-sm text-[#64756F]">
-                        {incomingMembers.map((member, index) => (
-                          <li key={member?._id || member?.id || index} className="break-all">
-                            {displayMember(member)}
-                          </li>
-                        ))}
+                      <ul className="mt-3 space-y-2 text-sm text-[#64756F]">
+                        {incomingMembers.map((member, index) => {
+                          const mId = typeof member === "string" ? member : member?._id || member?.id;
+                          return (
+                            <li key={mId || index} className="rounded-xl border border-[#E1ECE6] bg-white p-2.5">
+                              <p className="break-all font-medium text-[#29483B]">{displayMember(member)}</p>
+                              {user?.role === "leader" && mId && (
+                                <div className="mt-2 flex items-center justify-between gap-2 border-t border-[#F0F5F2] pt-2 text-xs">
+                                  <span className="text-[11px] text-[#82918B]">Role:</span>
+                                  <select
+                                    value={member?.role || "incoming"}
+                                    onChange={(e) => handleUpdateMemberRole(mId, e.target.value)}
+                                    disabled={updatingRoleId === mId || mId === user?.id || mId === user?.userId}
+                                    className="rounded-lg border border-[#D8E7DF] bg-[#F8FCF9] px-2 py-0.5 text-xs text-[#29483B] outline-none"
+                                  >
+                                    <option value="incoming">Incoming</option>
+                                    <option value="outgoing">Outgoing</option>
+                                    <option value="member">Member</option>
+                                    <option value="leader">Leader</option>
+                                  </select>
+                                </div>
+                              )}
+                            </li>
+                          );
+                        })}
                       </ul>
                     )}
                   </div>
@@ -631,7 +758,7 @@ export default function Dashboard({
                 <div className="flex flex-col gap-3 sm:flex-row">
                   <Button
                     onClick={handleReconstructProject}
-                    disabled={reconstructing || riskMapLoading}
+                    disabled={reconstructing || riskMapLoading || freshnessScanning}
                     className="gap-2 rounded-xl bg-[#159B59] text-white hover:bg-[#087A3D]"
                   >
                     {reconstructing ? (
@@ -644,7 +771,7 @@ export default function Dashboard({
                   <Button
                     variant="outline"
                     onClick={handleLoadRiskMap}
-                    disabled={riskMapLoading || reconstructing}
+                    disabled={riskMapLoading || reconstructing || freshnessScanning}
                     className="gap-2 rounded-xl border-[#D8E7DF] bg-white text-[#24483A]"
                   >
                     {riskMapLoading ? (
@@ -653,7 +780,40 @@ export default function Dashboard({
                       <><Activity size={16} /> Load Risk Map</>
                     )}
                   </Button>
+
+                  <Button
+                    variant="outline"
+                    onClick={handleScanFreshness}
+                    disabled={freshnessScanning || reconstructing || riskMapLoading}
+                    className="gap-2 rounded-xl border-[#D8E7DF] bg-white text-[#24483A]"
+                  >
+                    {freshnessScanning ? (
+                      <><Loader2 size={16} className="animate-spin" /> Scanning Freshness...</>
+                    ) : (
+                      <><RefreshCw size={16} /> Scan Freshness</>
+                    )}
+                  </Button>
                 </div>
+
+                {freshnessReport && (
+                  <div className="mt-4 rounded-xl border border-[#CDE9D8] bg-[#EAF8EF] p-4 text-sm text-[#087A3D]">
+                    <div className="flex items-center gap-2 font-semibold">
+                      <CheckCircle2 size={16} />
+                      <span>Freshness scan complete</span>
+                    </div>
+                    <p className="mt-1 text-xs text-[#24483A]">
+                      {freshnessReport.message || "Freshness scanned across project findings."}
+                      {freshnessReport.staleCount !== undefined && ` Stale findings: ${freshnessReport.staleCount}.`}
+                      {freshnessReport.scannedAt && ` Last scanned: ${new Date(freshnessReport.scannedAt).toLocaleString()}.`}
+                    </p>
+                  </div>
+                )}
+                {freshnessError && (
+                  <div className="mt-4 flex items-start gap-2 rounded-xl border border-[#F1D7D2] bg-[#FFF5F3] p-3 text-sm text-[#A33F32]">
+                    <AlertTriangle size={17} className="mt-0.5 shrink-0" />
+                    <span>{freshnessError}</span>
+                  </div>
+                )}
 
                 {reconstructionMessage && (
                   <div className="mt-4 rounded-xl border border-[#CDE9D8] bg-[#EAF8EF] p-3 text-sm text-[#087A3D]">
@@ -682,6 +842,55 @@ export default function Dashboard({
                 )}
               </section>
 
+              {/* Handover History & Version Snapshots */}
+              <section className="rounded-3xl border border-[#D8EADF] bg-white p-6 shadow-sm sm:p-8">
+                <div className="mb-4 flex items-center gap-2">
+                  <Clock3 size={19} className="text-[#159B59]" />
+                  <h2 className="text-xl font-bold text-[#001E2B]">Handover History & Version Snapshots</h2>
+                </div>
+                <p className="text-sm text-[#71817B]">
+                  Audit trail of generated handover packages, version snapshots, and acknowledgement receipts.
+                </p>
+                {historyData.length === 0 ? (
+                  <div className="mt-4 rounded-2xl border border-dashed border-[#D8EADF] bg-[#F8FCF9] p-6 text-center text-sm text-[#71817B]">
+                    No handover versions or receipts recorded yet.
+                  </div>
+                ) : (
+                  <div className="mt-4 overflow-hidden rounded-2xl border border-[#E1ECE6]">
+                    <table className="w-full text-left text-sm text-[#29483B]">
+                      <thead className="bg-[#F8FCF9] text-xs font-semibold uppercase text-[#82918B]">
+                        <tr>
+                          <th className="px-4 py-3">Version / Snapshot</th>
+                          <th className="px-4 py-3">Status</th>
+                          <th className="px-4 py-3">Timestamp</th>
+                          <th className="px-4 py-3">Recipient / Sign-off</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#EAF1ED]">
+                        {historyData.map((item, idx) => (
+                          <tr key={item._id || item.id || idx} className="hover:bg-[#F9FCFA]">
+                            <td className="px-4 py-3 font-medium text-[#001E2B]">
+                              {item.version || item.snapshotId || `Snapshot #${idx + 1}`}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className="rounded-full bg-[#E8F8EF] px-2.5 py-1 text-xs font-semibold text-[#159B59]">
+                                {item.status || item.type || "Saved"}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-xs text-[#71817B]">
+                              {item.createdAt || item.timestamp ? new Date(item.createdAt || item.timestamp).toLocaleString() : "N/A"}
+                            </td>
+                            <td className="px-4 py-3 text-xs text-[#64756F]">
+                              {item.acknowledgedBy?.name || item.acknowledgedBy || item.signer || "Pending"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
               <section className="rounded-3xl border border-[#D8EADF] bg-white p-6 shadow-sm sm:p-8">
                 <h2 className="text-xl font-bold text-[#001E2B]">Workspace Information</h2>
                 <dl className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -701,47 +910,6 @@ export default function Dashboard({
       </main>
     );
   }
-
-  const computedStats = useMemo(() => {
-    if (projectFindings && projectFindings.length > 0) {
-      const counts = { total: projectFindings.length, supported: 0, needsReview: 0, conflicting: 0 };
-      projectFindings.forEach((f) => {
-        const s = (f.status || f.verification_status || "").toLowerCase();
-        if (s === "supported") counts.supported++;
-        else if (s === "needs_review" || s === "needsreview") counts.needsReview++;
-        else if (s === "conflicting") counts.conflicting++;
-      });
-      return counts;
-    }
-    return data?.stats || { total: 0, supported: 0, needsReview: 0, conflicting: 0 };
-  }, [projectFindings, data]);
-
-  const stats = [
-    {
-      title: "Total Findings",
-      value: computedStats.total,
-      description: "All reconstructed findings",
-      type: "total",
-    },
-    {
-      title: "Supported",
-      value: computedStats.supported,
-      description: "Evidence-backed findings",
-      type: "supported",
-    },
-    {
-      title: "Needs Review",
-      value: computedStats.needsReview,
-      description: "Awaiting verification",
-      type: "review",
-    },
-    {
-      title: "Conflicting",
-      value: computedStats.conflicting,
-      description: "Conflicting evidence",
-      type: "conflicting",
-    },
-  ];
 
   return (
     <main className="dashboard-page min-h-screen bg-[#F6FAF8]">

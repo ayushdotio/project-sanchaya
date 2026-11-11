@@ -368,8 +368,18 @@ export default function App() {
       )}
 
       {/* TEAM MEMBER DASHBOARD */}
-      {user?.role === "member" && activePage === "dashboard" && (
+      {(user?.role === "member" || user?.role === "team_member") && activePage === "dashboard" && (
         <TeamMemberDashboard
+          user={user}
+          approved={approved}
+          shared={shared}
+          onNavigate={handleNavigate}
+        />
+      )}
+
+      {/* FALLBACK FOR UNKNOWN ROLES */}
+      {user && !["leader", "outgoing", "incoming", "member", "team_member"].includes(user.role) && activePage === "dashboard" && (
+        <IncomingDashboard
           user={user}
           approved={approved}
           shared={shared}
@@ -455,7 +465,7 @@ export default function App() {
       )}
 
       {/* SOURCE UPLOAD PAGE */}
-      {user?.role === "leader" && activePage === "sources" && (
+      {(user?.role === "leader" || user?.role === "outgoing") && activePage === "sources" && (
         <SourceUpload
           onNavigate={handleNavigate}
           projectId={selectedProjectId}

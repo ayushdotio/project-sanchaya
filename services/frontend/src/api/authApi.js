@@ -4,7 +4,8 @@ export const ROLE_LABEL = {
   leader: "Team Leader",
   outgoing: "Outgoing Member",
   incoming: "Incoming Member",
-  member: "Team Member", // preserved for legacy UI fallback
+  member: "Team Member",
+  team_member: "Team Member",
 };
 
 export const DEMO_ACCOUNTS = [

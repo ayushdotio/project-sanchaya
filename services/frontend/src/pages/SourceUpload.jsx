@@ -25,6 +25,7 @@ import {
   getProjectSources,
   getSourceRecordById,
   getProjectDocuments,
+  getProjectDocumentById,
 } from "../api/sourcesApi";
 
 const ACCEPTED_TYPES = [".pdf", ".docx", ".txt"];
@@ -57,6 +58,8 @@ export default function SourceUpload({ onNavigate, projectId }) {
 
   const [documents, setDocuments] = useState([]);
   const [docsLoading, setDocsLoading] = useState(false);
+  const [selectedDocDetail, setSelectedDocDetail] = useState(null);
+  const [docDetailStatus, setDocDetailStatus] = useState("idle");
 
   const taskInputRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -341,6 +344,21 @@ export default function SourceUpload({ onNavigate, projectId }) {
       console.warn("Could not load ImageKit documents:", err);
     } finally {
       setDocsLoading(false);
+    }
+  }
+
+  // Fetch single ImageKit document details by fileId
+  async function handleInspectDocument(fileId) {
+    if (!projectId || !fileId) return;
+    setDocDetailStatus("loading");
+    setSelectedDocDetail(null);
+    try {
+      const data = await getProjectDocumentById(projectId, fileId);
+      setSelectedDocDetail(data);
+      setDocDetailStatus("success");
+    } catch (err) {
+      console.warn("Could not fetch document details:", err);
+      setDocDetailStatus("error");
     }
   }
 
@@ -714,19 +732,72 @@ export default function SourceUpload({ onNavigate, projectId }) {
                   <p className="truncate font-semibold text-[#001E2B]">{doc.name}</p>
                   <p className="text-[#64756F]">{doc.size ? formatSize(doc.size) : "Cloud document"}</p>
                 </div>
-                {doc.url && (
-                  <a
-                    href={doc.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 font-semibold text-[#159B59] hover:underline shrink-0"
-                  >
-                    Open <ExternalLink size={12} />
-                  </a>
-                )}
+                <div className="flex items-center gap-2 shrink-0">
+                  {doc.fileId && (
+                    <button
+                      type="button"
+                      onClick={() => handleInspectDocument(doc.fileId)}
+                      className="inline-flex items-center gap-1 font-semibold text-[#00665D] hover:underline"
+                    >
+                      <Eye size={12} /> Info
+                    </button>
+                  )}
+                  {doc.url && (
+                    <a
+                      href={doc.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 font-semibold text-[#159B59] hover:underline"
+                    >
+                      Open <ExternalLink size={12} />
+                    </a>
+                  )}
+                </div>
               </div>
             ))}
           </div>
+
+          {selectedDocDetail && (
+            <div className="mt-4 rounded-xl border border-[#CDE9D8] bg-[#F7FCF9] p-4 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-[#001E2B]">
+                  Document Metadata: {selectedDocDetail.name}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedDocDetail(null)}
+                  className="text-[#64756F] hover:text-black"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              <dl className="mt-2 grid grid-cols-2 gap-2 text-[#4A5F5B]">
+                <div>
+                  File ID: <span className="font-mono text-[#001E2B]">{selectedDocDetail.fileId}</span>
+                </div>
+                <div>
+                  Folder:{" "}
+                  <span className="font-mono text-[#001E2B]">
+                    {selectedDocDetail.filePath || selectedDocDetail.folder || "N/A"}
+                  </span>
+                </div>
+                <div>
+                  Size:{" "}
+                  <span className="font-semibold text-[#001E2B]">
+                    {selectedDocDetail.size ? formatSize(selectedDocDetail.size) : "N/A"}
+                  </span>
+                </div>
+                <div>
+                  Created:{" "}
+                  <span className="text-[#001E2B]">
+                    {selectedDocDetail.createdAt
+                      ? new Date(selectedDocDetail.createdAt).toLocaleString()
+                      : "N/A"}
+                  </span>
+                </div>
+              </dl>
+            </div>
+          )}
         </section>
       )}
 

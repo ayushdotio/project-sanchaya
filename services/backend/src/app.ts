@@ -62,16 +62,16 @@ app.get("/health", (_req: Request, res: Response) => {
   });
 });
 
-// Mount API routes
-app.use("/api/auth", authRoutes);
-app.use("/api/projects", projectRoutes);
-app.use("/api/projects", uploadRoutes);
-app.use("/api/projects", githubRoutes);
-app.use("/api/projects", findingRoutes);
-app.use("/api/projects", gapRoutes);
-app.use("/api/projects", readinessRoutes);
-app.use("/api/projects", handoverRoutes);
-app.use("/api/users", userRoutes);
+// Mount API routes (supports both /api/* and root /* for client resilience)
+app.use(["/api/auth", "/auth"], authRoutes);
+app.use(["/api/projects", "/projects"], projectRoutes);
+app.use(["/api/projects", "/projects"], uploadRoutes);
+app.use(["/api/projects", "/projects"], githubRoutes);
+app.use(["/api/projects", "/projects"], findingRoutes);
+app.use(["/api/projects", "/projects"], gapRoutes);
+app.use(["/api/projects", "/projects"], readinessRoutes);
+app.use(["/api/projects", "/projects"], handoverRoutes);
+app.use(["/api/users", "/users"], userRoutes);
 
 // Catch 404 for unmapped endpoints
 app.use((_req: Request, res: Response) => {

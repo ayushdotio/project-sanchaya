@@ -16,6 +16,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { getProjects } from "@/services/projectsApi";
+import { getFindings } from "@/api/findingsApi";
 
 export default function IncomingDashboard({
   user,
@@ -25,6 +26,7 @@ export default function IncomingDashboard({
 }) {
   const [projects, setProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [projectFindings, setProjectFindings] = useState([]);
 
   useEffect(() => {
     getProjects()
@@ -37,19 +39,38 @@ export default function IncomingDashboard({
       .catch((err) => console.warn("Could not load incoming projects:", err));
   }, []);
 
+  useEffect(() => {
+    if (selectedProjectId) {
+      getFindings(selectedProjectId)
+        .then((items) => {
+          if (Array.isArray(items)) setProjectFindings(items);
+        })
+        .catch(() => {});
+    }
+  }, [selectedProjectId]);
+
+  const activeProject =
+    projects.find((p) => (p._id || p.id) === selectedProjectId) || projects[0];
+
   const hasApprovedProject = projects.some(
     (p) => p.readinessStatus === "Approved for Sharing"
   );
 
-  const confirmed = approved.filter(
-    (finding) => finding.status === "supported"
+  // If approved items passed from parent, use them; otherwise use supported findings from project
+  const effectiveApproved =
+    approved.length > 0
+      ? approved
+      : projectFindings.filter((f) => (f.status || f.verification_status || "").toLowerCase() === "supported" || f.review === "approved");
+
+  const confirmed = effectiveApproved.filter(
+    (finding) => (finding.status || finding.verification_status || "").toLowerCase() === "supported"
   );
 
-  const followUp = approved.filter(
-    (finding) => finding.status !== "supported"
+  const followUp = effectiveApproved.filter(
+    (finding) => (finding.status || finding.verification_status || "").toLowerCase() !== "supported"
   );
 
-  const ready = (shared && approved.length > 0) || hasApprovedProject;
+  const ready = (shared && effectiveApproved.length > 0) || hasApprovedProject;
 
   const stats = [
     {
@@ -124,14 +145,29 @@ export default function IncomingDashboard({
                   PROJECT WORKSPACE
                 </div>
                 <h2 className="text-2xl font-bold tracking-tight text-[#001E2B] sm:text-3xl">
-                  Sanchaya
+                  {activeProject?.name || "Sanchaya"}
                 </h2>
                 <p className="mt-2 text-sm text-[#71817B]">
-                  Preserving Knowledge. Connecting People. Continuing Projects.
+                  {activeProject?.description || "Preserving Knowledge. Connecting People. Continuing Projects."}
                 </p>
               </div>
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-[#D8EEE1] bg-[#EFF9F3] text-[#159B59]">
-                <FolderKanban size={26} />
+              <div className="flex items-center gap-3">
+                {projects.length > 1 && (
+                  <select
+                    value={selectedProjectId}
+                    onChange={(e) => setSelectedProjectId(e.target.value)}
+                    className="rounded-xl border border-[#D8E7DF] bg-[#F8FCF9] px-3 py-2 text-xs font-semibold text-[#29483B] outline-none"
+                  >
+                    {projects.map((p) => (
+                      <option key={p._id || p.id} value={p._id || p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-[#D8EEE1] bg-[#EFF9F3] text-[#159B59]">
+                  <FolderKanban size={26} />
+                </div>
               </div>
             </div>
 
@@ -371,9 +407,9 @@ export default function IncomingDashboard({
 
         <footer className="mt-8 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-[11px] text-[#91A099]">
           <ListChecks size={12} />
-          Demonstration dashboard
+          Incoming Member Workspace
           <span>·</span>
-          Backend integration pending
+          Connected to Sanchaya backend
         </footer>
       </div>
     </main>

@@ -26,32 +26,53 @@ export default function OutgoingDashboard({ user, onNavigate }) {
   const [selectedProjectId, setSelectedProjectId] = useState("");
 
   useEffect(() => {
-    async function loadData() {
+    async function loadProjects() {
       try {
         const projectList = await getProjects().catch(() => []);
         setProjects(projectList);
-        const pid = projectList[0]?._id || projectList[0]?.id || "";
-        setSelectedProjectId(pid);
-
-        const result = await getFindings(pid);
-        setFindings(result);
+        if (projectList.length > 0) {
+          const pid = projectList[0]?._id || projectList[0]?.id || "";
+          setSelectedProjectId(pid);
+        }
       } catch (err) {
-        console.error("Could not load outgoing dashboard data:", err);
+        console.error("Could not load projects:", err);
+      }
+    }
+    loadProjects();
+  }, []);
+
+  useEffect(() => {
+    async function loadFindings() {
+      if (!selectedProjectId) {
+        setFindings([]);
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      setError(false);
+      try {
+        const result = await getFindings(selectedProjectId);
+        setFindings(Array.isArray(result) ? result : []);
+      } catch (err) {
+        console.error("Could not load outgoing dashboard findings:", err);
         setError(true);
       } finally {
         setLoading(false);
       }
     }
 
-    loadData();
-  }, []);
+    loadFindings();
+  }, [selectedProjectId]);
+
+  const activeProject =
+    projects.find((p) => (p._id || p.id) === selectedProjectId) || projects[0];
 
   const pendingFindings = findings.filter(
-    (finding) => finding.status !== "supported"
+    (finding) => (finding.status || finding.verification_status || "").toLowerCase() !== "supported"
   );
 
   const supportedFindings = findings.filter(
-    (finding) => finding.status === "supported"
+    (finding) => (finding.status || finding.verification_status || "").toLowerCase() === "supported"
   );
 
   const stats = [
@@ -117,15 +138,39 @@ export default function OutgoingDashboard({ user, onNavigate }) {
                   ACTIVE PROJECT
                 </div>
                 <h2 className="text-2xl font-bold tracking-tight text-[#001E2B] sm:text-3xl">
-                  Sanchaya
+                  {activeProject?.name || "Sanchaya"}
                 </h2>
                 <p className="mt-2 text-sm text-[#71817B]">
-                  Preserving Knowledge. Connecting People. Continuing Projects.
+                  {activeProject?.description || "Preserving Knowledge. Connecting People. Continuing Projects."}
                 </p>
               </div>
 
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-[#D8EEE1] bg-[#EFF9F3] text-[#159B59]">
-                <FolderKanban size={26} />
+              <div className="flex items-center gap-3">
+                {projects.length > 1 && (
+                  <select
+                    value={selectedProjectId}
+                    onChange={(e) => setSelectedProjectId(e.target.value)}
+                    className="rounded-xl border border-[#D8E7DF] bg-[#F8FCF9] px-3 py-2 text-xs font-semibold text-[#29483B] outline-none"
+                  >
+                    {projects.map((p) => (
+                      <option key={p._id || p.id} value={p._id || p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onNavigate("sources", selectedProjectId)}
+                  className="gap-1.5 rounded-xl border-[#D8E7DF] bg-white text-xs font-semibold text-[#24483A] hover:border-[#159B59]"
+                >
+                  <FolderKanban size={14} />
+                  Connect Sources
+                </Button>
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-[#D8EEE1] bg-[#EFF9F3] text-[#159B59]">
+                  <FolderKanban size={26} />
+                </div>
               </div>
             </div>
 
@@ -345,7 +390,7 @@ export default function OutgoingDashboard({ user, onNavigate }) {
             </div>
 
             <Button
-              onClick={() => onNavigate("questions")}
+              onClick={() => onNavigate("questions", selectedProjectId)}
               className="mt-6 h-11 gap-2 rounded-xl bg-[#159B59] px-5 text-white shadow-sm transition hover:bg-[#087A3D]"
             >
               Start Handover
@@ -357,11 +402,9 @@ export default function OutgoingDashboard({ user, onNavigate }) {
 
         <footer className="mt-8 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-[11px] text-[#91A099]">
           <Check size={12} />
-          Demonstration dashboard
+          Outgoing Member Workspace
           <span>·</span>
-          Sample data
-          <span>·</span>
-          Backend integration pending
+          Connected to Sanchaya backend
         </footer>
       </div>
     </main>
