@@ -605,5 +605,65 @@ describe("AI Engine <-> Backend Integration", () => {
     assert.equal(res.body.success, false);
     assert.match(res.body.error, /timed out/i);
   });
+
+  it("resolves Vercel runtime service bindings dynamically (including base paths) via process.env", async () => {
+    mockAuthenticatedUser();
+    mock.method(Project, "findById", async () => ({ _id: PROJECT_ID }) as any);
+    mockSourceRecords(sampleSources);
+
+    const prevAiUrl = process.env.AI_SERVICE_URL;
+    const prevAnalyticsUrl = process.env.ANALYTICS_SERVICE_URL;
+    process.env.AI_SERVICE_URL = "https://internal.vercel.run/_svc/ai-engine/";
+    process.env.ANALYTICS_SERVICE_URL = "https://internal.vercel.run/_svc/analytics";
+
+    const calledUrls: string[] = [];
+    mock.method(axios, "post", async (url: string) => {
+      calledUrls.push(url);
+      return {
+        data: {
+          success: true,
+          findingsCount: 0,
+          supportedCount: 0,
+          gapsGenerated: 0,
+          riskSummary: { units: [], rules: [] },
+        },
+      } as any;
+    });
+
+    try {
+      const reconRes = await dispatchJsonRequest(
+        `/api/projects/${PROJECT_ID}/reconstruct`,
+        {
+          headers: { Authorization: `Bearer ${signTestToken("leader")}` },
+        },
+      );
+      assert.equal(reconRes.status, 200);
+
+      const riskRes = await dispatchJsonRequest(
+        `/api/projects/${PROJECT_ID}/risk-map`,
+        {
+          method: "GET",
+          headers: { Authorization: `Bearer ${signTestToken("leader")}` },
+        },
+      );
+      assert.equal(riskRes.status, 200);
+
+      assert.deepEqual(calledUrls, [
+        "https://internal.vercel.run/_svc/ai-engine/internal/extract-and-verify",
+        "https://internal.vercel.run/_svc/analytics/internal/compute-risk-and-readiness",
+      ]);
+    } finally {
+      if (prevAiUrl === undefined) {
+        delete process.env.AI_SERVICE_URL;
+      } else {
+        process.env.AI_SERVICE_URL = prevAiUrl;
+      }
+      if (prevAnalyticsUrl === undefined) {
+        delete process.env.ANALYTICS_SERVICE_URL;
+      } else {
+        process.env.ANALYTICS_SERVICE_URL = prevAnalyticsUrl;
+      }
+    }
+  });
 });
 
