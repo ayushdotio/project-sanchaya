@@ -1,5 +1,12 @@
+
 import { useEffect, useState } from "react";
 import { getDashboardData } from "@/services/dashboardApi";
+import { reconstructProject, getProjectRiskMap } from "@/services/reconstructionApi";
+import {
+  getProjects,
+  createProject,
+  getProjectById,
+} from "@/services/projectsApi";
 
 import StatsCard from "@/components/dashboard/StatsCard";
 import FindingChart from "@/components/dashboard/FindingChart";
@@ -10,6 +17,7 @@ import KnowledgeGapRadar from "@/components/dashboard/KnowledgeGapRadar";
 import SourceManagement from "@/components/dashboard/SourceManagement";
 
 import { Button } from "@/components/ui/button";
+
 import {
   RefreshCw,
   FolderKanban,
@@ -22,6 +30,13 @@ import {
   AlertTriangle,
   Clock3,
   Sparkles,
+  Plus,
+  X,
+  GitBranch,
+  ExternalLink,
+  Loader2,
+  ArrowLeft,
+  Users,
 } from "lucide-react";
 
 export default function Dashboard({
@@ -34,36 +49,197 @@ export default function Dashboard({
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  async function loadDashboard() {
-    setLoading(true);
+  // Real project state
+  const [projects, setProjects] = useState([]);
+  const [projectLoading, setProjectLoading] = useState(true);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [projectName, setProjectName] = useState("");
+  const [projectDescription, setProjectDescription] = useState("");
+  const [githubRepo, setGithubRepo] = useState("");
+  const [projectError, setProjectError] = useState("");
+  const [creatingProject, setCreatingProject] = useState(false);
+
+  // Selected project details
+  const [selectedProject, setSelectedProject] = useState(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsError, setDetailsError] = useState("");
+  const [reconstructing, setReconstructing] = useState(false);
+  const [reconstructionMessage, setReconstructionMessage] = useState("");
+  const [reconstructionError, setReconstructionError] = useState("");
+  const [riskMapLoading, setRiskMapLoading] = useState(false);
+  const [riskMapData, setRiskMapData] = useState(null);
+  const [riskMapError, setRiskMapError] = useState("");
+
+  async function handleOpenProject(project) {
+    const projectId = project?._id || project?.id;
+
+    if (!projectId) {
+      setDetailsError("This project does not contain a valid project ID.");
+      return;
+    }
+
+    setDetailsLoading(true);
+    setDetailsError("");
+    setSelectedProject(null);
 
     try {
-      const result = await getDashboardData();
-      setData(result);
-      setRefreshKey((prev) => prev + 1);
+      const details = await getProjectById(projectId);
+      setSelectedProject(details);
     } catch (error) {
-      console.error("Dashboard loading failed:", error);
-      setData(null);
+      console.error("Project details loading failed:", error);
+      setDetailsError(
+        error.message || "Unable to load project details. Please try again."
+      );
     } finally {
-      setLoading(false);
+      setDetailsLoading(false);
     }
   }
 
+  async function handleReconstructProject() {
+    const projectId = selectedProject?._id || selectedProject?.id;
+    if (!projectId) {
+      setReconstructionError("A valid project ID is required.");
+      return;
+    }
+
+    setReconstructing(true);
+    setReconstructionMessage("");
+    setReconstructionError("");
+
+    try {
+      const result = await reconstructProject(projectId);
+      setReconstructionMessage(
+        result?.message || "Knowledge reconstruction was triggered successfully."
+      );
+    } catch (error) {
+      setReconstructionError(
+        error.message || "Unable to start knowledge reconstruction."
+      );
+    } finally {
+      setReconstructing(false);
+    }
+  }
+
+  async function handleLoadRiskMap() {
+    const projectId = selectedProject?._id || selectedProject?.id;
+    if (!projectId) {
+      setRiskMapError("A valid project ID is required.");
+      return;
+    }
+
+    setRiskMapLoading(true);
+    setRiskMapError("");
+    setRiskMapData(null);
+
+    try {
+      const result = await getProjectRiskMap(projectId);
+      setRiskMapData(result);
+    } catch (error) {
+      setRiskMapError(error.message || "Unable to load the risk map.");
+    } finally {
+      setRiskMapLoading(false);
+    }
+  }
+
+  // Load dashboard and projects
+  async function loadDashboard() {
+    setLoading(true);
+    setProjectLoading(true);
+    setProjectError("");
+
+    const [dashboardResult, projectsResult] =
+      await Promise.allSettled([
+        getDashboardData(),
+        getProjects(),
+      ]);
+
+    if (dashboardResult.status === "fulfilled") {
+      setData(dashboardResult.value);
+      setRefreshKey((prev) => prev + 1);
+    } else {
+      console.error(
+        "Dashboard loading failed:",
+        dashboardResult.reason
+      );
+      setData(null);
+    }
+
+    if (projectsResult.status === "fulfilled") {
+      setProjects(projectsResult.value);
+    } else {
+      console.error(
+        "Project loading failed:",
+        projectsResult.reason
+      );
+      setProjects([]);
+      setProjectError(
+        projectsResult.reason?.message ||
+          "Unable to load projects. Please try again."
+      );
+    }
+
+    setLoading(false);
+    setProjectLoading(false);
+  }
+
   useEffect(() => {
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  loadDashboard();
-}, []);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadDashboard();
+  }, []);
+
+  // Create a new project
+  async function handleCreateProject(event) {
+    event.preventDefault();
+
+    setProjectError("");
+
+    if (projectName.trim().length < 2) {
+      setProjectError(
+        "Project name must contain at least 2 characters."
+      );
+      return;
+    }
+
+    try {
+      setCreatingProject(true);
+
+      const newProject = await createProject({
+        name: projectName.trim(),
+        description: projectDescription.trim(),
+        githubRepo: githubRepo.trim(),
+      });
+
+      setProjects((prev) => [newProject, ...prev]);
+
+      setProjectName("");
+      setProjectDescription("");
+      setGithubRepo("");
+      setShowCreateForm(false);
+    } catch (error) {
+      console.error("Project creation failed:", error);
+      setProjectError(
+        error.message || "Unable to create project."
+      );
+    } finally {
+      setCreatingProject(false);
+    }
+  }
 
   if (loading && !data) {
     return (
       <main className="min-h-[70vh] bg-[#F6FAF8] px-5 py-20">
         <div className="mx-auto max-w-7xl rounded-3xl border border-[#E1ECE6] bg-white px-6 py-16 text-center shadow-sm">
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#E8F8EF]">
-            <RefreshCw className="animate-spin text-[#159B59]" size={25} />
+            <RefreshCw
+              className="animate-spin text-[#159B59]"
+              size={25}
+            />
           </div>
+
           <h2 className="text-lg font-semibold text-[#001E2B]">
             Preparing your workspace
           </h2>
+
           <p className="mt-2 text-sm text-[#71817B]">
             Loading Team Leader Dashboard...
           </p>
@@ -77,14 +253,21 @@ export default function Dashboard({
       <main className="min-h-[70vh] bg-[#F6FAF8] px-5 py-16">
         <div className="mx-auto max-w-xl rounded-3xl border border-[#E1ECE6] bg-white p-10 text-center shadow-sm">
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FFF3E8]">
-            <AlertTriangle className="text-[#C47732]" size={25} />
+            <AlertTriangle
+              className="text-[#C47732]"
+              size={25}
+            />
           </div>
+
           <h2 className="mt-4 text-xl font-bold text-[#001E2B]">
             Dashboard data unavailable
           </h2>
+
           <p className="mt-2 text-sm leading-6 text-[#71817B]">
-            We could not load the workspace information. Please try again.
+            We could not load the workspace information.
+            Please try again.
           </p>
+
           <Button
             onClick={loadDashboard}
             className="mt-6 gap-2 rounded-xl bg-[#159B59] px-5 text-white hover:bg-[#087A3D]"
@@ -102,16 +285,249 @@ export default function Dashboard({
       <main className="min-h-[70vh] bg-[#F6FAF8] px-5 py-16 sm:px-8">
         <section className="mx-auto max-w-3xl rounded-3xl border border-[#E1ECE6] bg-white p-10 text-center shadow-sm">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[#E8F8EF]">
-            <FolderKanban size={30} className="text-[#159B59]" />
+            <FolderKanban
+              size={30}
+              className="text-[#159B59]"
+            />
           </div>
+
           <h1 className="mt-5 text-2xl font-bold tracking-tight text-[#001E2B]">
             Your Role Dashboard
           </h1>
+
           <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-[#71817B]">
-            Your workspace will show information and actions based on your
-            role in the Sanchaya project.
+            Your workspace will show information and actions
+            based on your role in the Sanchaya project.
           </p>
         </section>
+      </main>
+    );
+  }
+
+  // Project details view. Data is loaded from GET /api/projects/:projectId.
+  if (detailsLoading || selectedProject || detailsError) {
+    const project = selectedProject;
+    const members = project?.members || {};
+    const incomingMembers = Array.isArray(members.incomingIds)
+      ? members.incomingIds
+      : [];
+    const outgoingMembers = Array.isArray(members.outgoingIds)
+      ? members.outgoingIds
+      : [];
+    const leader = members.leaderId;
+    const displayMember = (member) => {
+      if (typeof member === "string") return member;
+      return (
+        member?.name ||
+        member?.fullName ||
+        member?.email ||
+        member?._id ||
+        member?.id ||
+        "Member"
+      );
+    };
+
+    return (
+      <main className="min-h-screen bg-[#F6FAF8] px-4 py-8 sm:px-7 lg:px-10">
+        <div className="mx-auto max-w-5xl">
+          <Button
+            variant="outline"
+            onClick={() => {
+              setSelectedProject(null);
+              setDetailsError("");
+            }}
+            className="mb-6 gap-2 rounded-xl border-[#D8E7DF] bg-white text-[#24483A]"
+          >
+            <ArrowLeft size={16} />
+            Back to My Projects
+          </Button>
+
+          {detailsLoading ? (
+            <section className="rounded-3xl border border-[#D8EADF] bg-white p-12 text-center">
+              <RefreshCw className="mx-auto mb-3 animate-spin text-[#159B59]" size={25} />
+              <p className="text-sm text-[#71817B]">Loading project details...</p>
+            </section>
+          ) : detailsError ? (
+            <section className="rounded-3xl border border-[#F1D7D2] bg-white p-8">
+              <div className="flex items-start gap-3 text-[#A33F32]">
+                <AlertTriangle size={20} className="mt-0.5 shrink-0" />
+                <p className="text-sm">{detailsError}</p>
+              </div>
+            </section>
+          ) : project ? (
+            <div className="space-y-6">
+              <section className="rounded-3xl border border-[#D8EADF] bg-white p-6 shadow-sm sm:p-8">
+                <div className="mb-3 flex items-center gap-2 text-xs font-bold tracking-[0.15em] text-[#159B59]">
+                  <FolderKanban size={16} />
+                  PROJECT WORKSPACE
+                </div>
+                <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+                  <div>
+                    <h1 className="text-3xl font-bold tracking-tight text-[#001E2B]">
+                      {project.name || "Project"}
+                    </h1>
+                    <p className="mt-2 text-sm leading-6 text-[#71817B]">
+                      {project.description || "No project description provided."}
+                    </p>
+                  </div>
+                  <span className="w-fit rounded-full border border-[#F1E2C7] bg-[#FFF8EC] px-3 py-1.5 text-xs font-semibold text-[#9A681D]">
+                    {project.readinessStatus || "Needs Attention"}
+                  </span>
+                </div>
+                {project.githubRepo && (
+                  <a
+                    href={project.githubRepo}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-5 inline-flex items-center gap-2 break-all text-sm font-medium text-[#159B59] hover:underline"
+                  >
+                    <GitBranch size={16} />
+                    Open GitHub Repository
+                    <ExternalLink size={14} />
+                  </a>
+                )}
+              </section>
+
+              <section className="rounded-3xl border border-[#D8EADF] bg-white p-6 shadow-sm sm:p-8">
+                <div className="mb-5 flex items-center gap-2">
+                  <Users size={19} className="text-[#159B59]" />
+                  <h2 className="text-xl font-bold text-[#001E2B]">Project Members</h2>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <div className="rounded-2xl bg-[#F8FCF9] p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#82918B]">Team Leader</p>
+                    <p className="mt-2 break-all text-sm font-semibold text-[#29483B]">
+                      {leader ? displayMember(leader) : "Not available"}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl bg-[#F8FCF9] p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#82918B]">Outgoing Members</p>
+                    <p className="mt-2 text-2xl font-bold text-[#001E2B]">{outgoingMembers.length}</p>
+                    {outgoingMembers.length > 0 && (
+                      <ul className="mt-2 space-y-1 text-sm text-[#64756F]">
+                        {outgoingMembers.map((member, index) => (
+                          <li key={member?._id || member?.id || index} className="break-all">
+                            {displayMember(member)}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div className="rounded-2xl bg-[#F8FCF9] p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#82918B]">Incoming Members</p>
+                    <p className="mt-2 text-2xl font-bold text-[#001E2B]">{incomingMembers.length}</p>
+                    {incomingMembers.length > 0 && (
+                      <ul className="mt-2 space-y-1 text-sm text-[#64756F]">
+                        {incomingMembers.map((member, index) => (
+                          <li key={member?._id || member?.id || index} className="break-all">
+                            {displayMember(member)}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </section>
+
+              <section className="rounded-3xl border border-[#D8EADF] bg-white p-6 shadow-sm sm:p-8">
+                <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+                  <div>
+                    <h2 className="text-xl font-bold text-[#001E2B]">Project Sources</h2>
+                    <p className="mt-1 text-sm text-[#71817B]">Connect GitHub and add project knowledge sources.</p>
+                  </div>
+                  <Button
+                    onClick={() => onNavigate("sources", project._id || project.id)}
+                    className="gap-2 rounded-xl bg-[#159B59] text-white hover:bg-[#087A3D]"
+                  >
+                    <GitBranch size={16} />
+                    Connect GitHub
+                    <ArrowUpRight size={15} />
+                  </Button>
+                </div>
+              </section>
+
+              <section className="rounded-3xl border border-[#D8EADF] bg-white p-6 shadow-sm sm:p-8">
+                <div className="mb-5">
+                  <div className="mb-2 flex items-center gap-2 text-xs font-bold tracking-[0.15em] text-[#159B59]">
+                    <Sparkles size={16} />
+                    STAGE 2 · KNOWLEDGE RECONSTRUCTION
+                  </div>
+                  <h2 className="text-xl font-bold text-[#001E2B]">Reconstruct Project Knowledge</h2>
+                  <p className="mt-1 text-sm leading-6 text-[#71817B]">
+                    Analyse the connected project sources to reconstruct findings and calculate the project risk map.
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <Button
+                    onClick={handleReconstructProject}
+                    disabled={reconstructing || riskMapLoading}
+                    className="gap-2 rounded-xl bg-[#159B59] text-white hover:bg-[#087A3D]"
+                  >
+                    {reconstructing ? (
+                      <><Loader2 size={16} className="animate-spin" /> Reconstructing...</>
+                    ) : (
+                      <><Sparkles size={16} /> Run Knowledge Reconstruction</>
+                    )}
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    onClick={handleLoadRiskMap}
+                    disabled={riskMapLoading || reconstructing}
+                    className="gap-2 rounded-xl border-[#D8E7DF] bg-white text-[#24483A]"
+                  >
+                    {riskMapLoading ? (
+                      <><Loader2 size={16} className="animate-spin" /> Loading Risk Map...</>
+                    ) : (
+                      <><Activity size={16} /> Load Risk Map</>
+                    )}
+                  </Button>
+                </div>
+
+                {reconstructionMessage && (
+                  <div className="mt-4 rounded-xl border border-[#CDE9D8] bg-[#EAF8EF] p-3 text-sm text-[#087A3D]">
+                    {reconstructionMessage}
+                  </div>
+                )}
+                {reconstructionError && (
+                  <div className="mt-4 flex items-start gap-2 rounded-xl border border-[#F1D7D2] bg-[#FFF5F3] p-3 text-sm text-[#A33F32]">
+                    <AlertTriangle size={17} className="mt-0.5 shrink-0" />
+                    <span>{reconstructionError}</span>
+                  </div>
+                )}
+                {riskMapError && (
+                  <div className="mt-4 flex items-start gap-2 rounded-xl border border-[#F1D7D2] bg-[#FFF5F3] p-3 text-sm text-[#A33F32]">
+                    <AlertTriangle size={17} className="mt-0.5 shrink-0" />
+                    <span>{riskMapError}</span>
+                  </div>
+                )}
+                {riskMapData !== null && (
+                  <div className="mt-5">
+                    <h3 className="mb-2 text-sm font-semibold text-[#29483B]">Risk Map Response</h3>
+                    <pre className="max-h-96 overflow-auto rounded-xl border border-[#E1ECE6] bg-[#F8FCF9] p-4 text-xs leading-5 text-[#29483B] whitespace-pre-wrap break-words">
+                      {JSON.stringify(riskMapData, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </section>
+
+              <section className="rounded-3xl border border-[#D8EADF] bg-white p-6 shadow-sm sm:p-8">
+                <h2 className="text-xl font-bold text-[#001E2B]">Workspace Information</h2>
+                <dl className="mt-4 grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <dt className="text-xs font-semibold uppercase tracking-wide text-[#82918B]">Project ID</dt>
+                    <dd className="mt-1 break-all text-sm text-[#29483B]">{project._id || project.id || "Not returned"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-semibold uppercase tracking-wide text-[#82918B]">Readiness Status</dt>
+                    <dd className="mt-1 text-sm font-semibold text-[#29483B]">{project.readinessStatus || "Needs Attention"}</dd>
+                  </div>
+                </dl>
+              </section>
+            </div>
+          ) : null}
+        </div>
       </main>
     );
   }
@@ -146,6 +562,7 @@ export default function Dashboard({
   return (
     <main className="dashboard-page min-h-screen bg-[#F6FAF8]">
       <div className="mx-auto max-w-[1440px] px-4 py-7 sm:px-7 lg:px-10 lg:py-9">
+
         {/* Page heading */}
         <header className="dashboard-enter mb-8 flex flex-col justify-between gap-5 md:flex-row md:items-end">
           <div>
@@ -153,25 +570,299 @@ export default function Dashboard({
               <span className="h-2 w-2 rounded-full bg-[#159B59]" />
               SANCHAYA WORKSPACE
             </div>
+
             <h1 className="text-3xl font-bold tracking-tight text-[#001E2B] sm:text-[2.35rem]">
               Team Leader Dashboard
             </h1>
+
             <p className="mt-2 max-w-2xl text-sm leading-6 text-[#71817B] sm:text-[15px]">
-              Welcome back, {user?.name || "Team Leader"}. Monitor project
-              knowledge, verify findings, and prepare the team handover.
+              Welcome back, {user?.name || "Team Leader"}.
+              Monitor project knowledge, verify findings,
+              and prepare the team handover.
             </p>
           </div>
 
           <Button
             variant="outline"
             onClick={loadDashboard}
-            disabled={loading}
+            disabled={loading || projectLoading}
             className="h-10 gap-2 self-start rounded-xl border-[#D8E7DF] bg-white px-4 text-[#24483A] shadow-sm transition hover:border-[#159B59] hover:bg-[#F1FAF5] md:self-auto"
           >
-            <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
-            {loading ? "Refreshing..." : "Refresh data"}
+            <RefreshCw
+              size={15}
+              className={
+                loading || projectLoading ? "animate-spin" : ""
+              }
+            />
+            {loading || projectLoading
+              ? "Refreshing..."
+              : "Refresh data"}
           </Button>
         </header>
+
+        {/* Real projects section */}
+        <section className="dashboard-enter dashboard-delay-1 mb-8 rounded-3xl border border-[#D8EADF] bg-white p-6 shadow-[0_12px_40px_rgba(15,75,48,0.06)] sm:p-8">
+
+          <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-xs font-bold tracking-[0.15em] text-[#159B59]">
+                <FolderKanban size={16} />
+                YOUR WORKSPACES
+              </div>
+
+              <h2 className="text-2xl font-bold tracking-tight text-[#001E2B]">
+                My Projects
+              </h2>
+
+              <p className="mt-2 text-sm text-[#71817B]">
+                Manage your projects and preserve their knowledge.
+              </p>
+            </div>
+
+            <Button
+              onClick={() => {
+                setProjectError("");
+                setShowCreateForm((prev) => !prev);
+              }}
+              className="h-10 gap-2 rounded-xl bg-[#159B59] px-5 text-white hover:bg-[#087A3D]"
+            >
+              {showCreateForm ? (
+                <X size={16} />
+              ) : (
+                <Plus size={17} />
+              )}
+              {showCreateForm ? "Cancel" : "Create Project"}
+            </Button>
+          </div>
+
+          {/* Project error */}
+          {projectError && (
+            <div className="mb-5 flex items-start gap-2 rounded-xl border border-[#F1D7D2] bg-[#FFF5F3] p-4 text-sm text-[#A33F32]">
+              <AlertTriangle
+                size={17}
+                className="mt-0.5 shrink-0"
+              />
+              <p>{projectError}</p>
+            </div>
+          )}
+
+          {/* Create project form */}
+          {showCreateForm && (
+            <form
+              onSubmit={handleCreateProject}
+              className="mb-7 rounded-2xl border border-[#D8EADF] bg-[#F8FCF9] p-5 sm:p-6"
+            >
+              <h3 className="mb-5 text-lg font-bold text-[#001E2B]">
+                Create New Project
+              </h3>
+
+              <div className="grid gap-4">
+                <div>
+                  <label
+                    htmlFor="projectName"
+                    className="mb-2 block text-sm font-semibold text-[#29483B]"
+                  >
+                    Project Name *
+                  </label>
+
+                  <input
+                    id="projectName"
+                    type="text"
+                    required
+                    minLength={2}
+                    value={projectName}
+                    onChange={(e) =>
+                      setProjectName(e.target.value)
+                    }
+                    placeholder="Enter your project name"
+                    className="h-11 w-full rounded-xl border border-[#D8E7DF] bg-white px-4 text-sm outline-none transition focus:border-[#159B59] focus:ring-2 focus:ring-[#159B59]/10"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="projectDescription"
+                    className="mb-2 block text-sm font-semibold text-[#29483B]"
+                  >
+                    Description
+                  </label>
+
+                  <textarea
+                    id="projectDescription"
+                    rows={3}
+                    value={projectDescription}
+                    onChange={(e) =>
+                      setProjectDescription(e.target.value)
+                    }
+                    placeholder="Describe your project..."
+                    className="w-full resize-none rounded-xl border border-[#D8E7DF] bg-white p-4 text-sm outline-none transition focus:border-[#159B59] focus:ring-2 focus:ring-[#159B59]/10"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="githubRepo"
+                    className="mb-2 flex items-center gap-2 text-sm font-semibold text-[#29483B]"
+                  >
+                    <GitBranch size={16} />
+                    GitHub Repository URL
+                  </label>
+
+                  <input
+                    id="githubRepo"
+                    type="url"
+                    value={githubRepo}
+                    onChange={(e) =>
+                      setGithubRepo(e.target.value)
+                    }
+                    placeholder="https://github.com/username/repository"
+                    className="h-11 w-full rounded-xl border border-[#D8E7DF] bg-white px-4 text-sm outline-none transition focus:border-[#159B59] focus:ring-2 focus:ring-[#159B59]/10"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-5 flex flex-wrap gap-3">
+                <Button
+                  type="submit"
+                  disabled={creatingProject}
+                  className="h-10 gap-2 rounded-xl bg-[#159B59] px-5 text-white hover:bg-[#087A3D]"
+                >
+                  {creatingProject ? (
+                    <>
+                      <Loader2
+                        size={16}
+                        className="animate-spin"
+                      />
+                      Creating...
+                    </>
+                  ) : (
+                    <>
+                      <Plus size={16} />
+                      Create Project
+                    </>
+                  )}
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={creatingProject}
+                  onClick={() => {
+                    setShowCreateForm(false);
+                    setProjectError("");
+                  }}
+                  className="h-10 rounded-xl border-[#D8E7DF] bg-white px-5 text-[#29483B]"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          )}
+
+          {/* Loading projects */}
+          {projectLoading ? (
+            <div className="flex items-center justify-center gap-3 py-12 text-sm text-[#71817B]">
+              <RefreshCw
+                size={19}
+                className="animate-spin text-[#159B59]"
+              />
+              Loading your projects...
+            </div>
+          ) : projects.length === 0 ? (
+            /* Empty state */
+            <div className="rounded-2xl border border-dashed border-[#CDE4D5] bg-[#F8FCF9] px-5 py-12 text-center">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#E8F8EF]">
+                <FolderKanban
+                  size={27}
+                  className="text-[#159B59]"
+                />
+              </div>
+
+              <h3 className="text-lg font-bold text-[#001E2B]">
+                No projects yet
+              </h3>
+
+              <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#71817B]">
+                Create your first project workspace to start
+                preserving knowledge and managing your team handover.
+              </p>
+
+              {!showCreateForm && (
+                <Button
+                  onClick={() => setShowCreateForm(true)}
+                  className="mt-5 gap-2 rounded-xl bg-[#159B59] px-5 text-white hover:bg-[#087A3D]"
+                >
+                  <Plus size={16} />
+                  Create Your First Project
+                </Button>
+              )}
+            </div>
+          ) : (
+            /* Actual projects from backend */
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {projects.map((project) => (
+                <div
+                  key={project._id || project.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => handleOpenProject(project)}
+                  onKeyDown={(event) => {
+                    if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+                      event.preventDefault();
+                      handleOpenProject(project);
+                    }
+                  }}
+                  className="group w-full cursor-pointer rounded-2xl border border-[#E1ECE6] bg-white p-5 text-left transition hover:-translate-y-1 hover:border-[#A8D7B9] hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-[#159B59]/30"
+                >
+                  <div className="mb-4 flex items-start justify-between gap-3">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#E8F8EF] text-[#159B59]">
+                      <FolderKanban size={21} />
+                    </div>
+
+                    <span className="rounded-full border border-[#F1E2C7] bg-[#FFF8EC] px-3 py-1 text-[11px] font-semibold text-[#9A681D]">
+                      {project.readinessStatus || "Needs Attention"}
+                    </span>
+                  </div>
+
+                  <h3 className="text-lg font-bold text-[#001E2B]">
+                    {project.name}
+                  </h3>
+
+                  <p className="mt-2 min-h-10 text-sm leading-5 text-[#71817B]">
+                    {project.description ||
+                      "No project description provided."}
+                  </p>
+
+                  {project.githubRepo && (
+                    <a
+                      href={project.githubRepo}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-4 inline-flex items-center gap-2 break-all text-xs font-medium text-[#159B59] hover:underline"
+                    >
+                      <GitBranch size={14} />
+                      GitHub Repository
+                      <ExternalLink size={12} />
+                    </a>
+                  )}
+
+                  <div className="mt-5 flex items-center justify-between border-t border-[#EAF1ED] pt-4">
+                    <span className="text-xs text-[#82918B]">
+                      Project Workspace
+                    </span>
+
+                    <span className="text-xs font-semibold text-[#159B59]">
+                      {project.members?.incomingIds?.length || 0} Incoming
+                    </span>
+                  </div>
+                  <span className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-[#159B59]">
+                    View project details <ArrowUpRight size={13} />
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
 
         {/* Project summary */}
         <section className="dashboard-enter dashboard-delay-1 relative mb-8 overflow-hidden rounded-3xl border border-[#D8EADF] bg-white shadow-[0_12px_40px_rgba(15,75,48,0.06)]">
@@ -185,11 +876,14 @@ export default function Dashboard({
                   <Sparkles size={15} />
                   ACTIVE PROJECT
                 </div>
+
                 <h2 className="text-2xl font-bold tracking-tight text-[#001E2B] sm:text-3xl">
-                  Sanchaya
+                  {projects[0]?.name || "Sanchaya"}
                 </h2>
+
                 <p className="mt-2 text-sm text-[#71817B]">
-                  Preserving Knowledge. Connecting People. Continuing Projects.
+                  {projects[0]?.description ||
+                    "Preserving Knowledge. Connecting People. Continuing Projects."}
                 </p>
               </div>
 
@@ -212,21 +906,38 @@ export default function Dashboard({
             <div className="mt-7 flex flex-col justify-between gap-4 border-t border-[#EAF1ED] pt-5 sm:flex-row sm:items-center">
               <div className="flex flex-wrap gap-x-6 gap-y-3 text-sm text-[#64756F]">
                 <span className="inline-flex items-center gap-2">
-                  <FolderKanban size={15} className="text-[#159B59]" />
-                  Team: <strong className="font-semibold text-[#29483B]">Epsilum</strong>
+                  <FolderKanban
+                    size={15}
+                    className="text-[#159B59]"
+                  />
+                  Team:{" "}
+                  <strong className="font-semibold text-[#29483B]">
+                    Epsilum
+                  </strong>
                 </span>
+
                 <span className="inline-flex items-center gap-2">
-                  <ShieldCheck size={15} className="text-[#159B59]" />
-                  Role: <strong className="font-semibold text-[#29483B]">Team Leader</strong>
+                  <ShieldCheck
+                    size={15}
+                    className="text-[#159B59]"
+                  />
+                  Role:{" "}
+                  <strong className="font-semibold text-[#29483B]">
+                    Team Leader
+                  </strong>
                 </span>
+
                 <span className="inline-flex items-center gap-2">
-                  <CalendarDays size={15} className="text-[#159B59]" />
+                  <CalendarDays
+                    size={15}
+                    className="text-[#159B59]"
+                  />
                   Project Workspace
                 </span>
               </div>
 
               <Button
-                onClick={() => onNavigate("sources")}
+                onClick={() => onNavigate("sources", projects[0]?._id || projects[0]?.id)}
                 className="h-10 gap-2 rounded-xl bg-[#159B59] px-5 text-white shadow-sm transition hover:bg-[#087A3D]"
               >
                 <FolderKanban size={16} />
@@ -243,13 +954,18 @@ export default function Dashboard({
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#E5F6EC] text-[#159B59]">
               <FolderKanban size={16} />
             </div>
+
             <div>
-              <h2 className="text-lg font-bold text-[#001E2B]">Project Sources</h2>
+              <h2 className="text-lg font-bold text-[#001E2B]">
+                Project Sources
+              </h2>
+
               <p className="text-xs text-[#82918B]">
                 Manage the material used to reconstruct project knowledge.
               </p>
             </div>
           </div>
+
           <SourceManagement />
         </section>
 
@@ -260,13 +976,16 @@ export default function Dashboard({
               <p className="mb-1 text-[11px] font-bold tracking-[0.16em] text-[#159B59]">
                 EVIDENCE SNAPSHOT
               </p>
+
               <h2 className="text-xl font-bold tracking-tight text-[#001E2B] sm:text-2xl">
                 Findings Overview
               </h2>
+
               <p className="mt-1 text-sm text-[#71817B]">
                 Monitor reconstructed information and its verification status.
               </p>
             </div>
+
             <div className="inline-flex items-center gap-2 text-xs font-medium text-[#82918B]">
               <Activity size={14} />
               Workspace summary
@@ -295,9 +1014,11 @@ export default function Dashboard({
             <p className="mb-1 text-[11px] font-bold tracking-[0.16em] text-[#159B59]">
               PROJECT INSIGHTS
             </p>
+
             <h2 className="text-xl font-bold tracking-tight text-[#001E2B] sm:text-2xl">
               Project Analytics
             </h2>
+
             <p className="mt-1 text-sm text-[#71817B]">
               Review evidence status and recorded contribution distribution.
             </p>
@@ -307,6 +1028,7 @@ export default function Dashboard({
             <div className="dashboard-enter dashboard-delay-1 min-w-0">
               <FindingChart />
             </div>
+
             <div className="dashboard-enter dashboard-delay-2 min-w-0">
               <ContributionChart />
             </div>
@@ -325,9 +1047,11 @@ export default function Dashboard({
             <p className="mb-1 text-[11px] font-bold tracking-[0.16em] text-[#159B59]">
               HANDOVER TRACKER
             </p>
+
             <h2 className="text-xl font-bold tracking-tight text-[#001E2B] sm:text-2xl">
               Project Progress
             </h2>
+
             <p className="mt-1 text-sm text-[#71817B]">
               Follow recent activity and overall handover readiness.
             </p>
@@ -345,31 +1069,41 @@ export default function Dashboard({
             <p className="mb-1 text-[11px] font-bold tracking-[0.16em] text-[#159B59]">
               WHAT NEEDS ATTENTION
             </p>
+
             <h2 className="text-xl font-bold tracking-tight text-[#001E2B] sm:text-2xl">
               Knowledge Gaps
             </h2>
+
             <p className="mt-1 text-sm text-[#71817B]">
               Identify areas where project knowledge may be incomplete.
             </p>
           </div>
+
           <KnowledgeGapRadar />
         </section>
 
         {/* Leader action */}
         <section className="dashboard-enter dashboard-delay-5 relative overflow-hidden rounded-3xl border border-[#CDE9D8] bg-gradient-to-br from-[#EAF8EF] via-[#F4FBF6] to-white p-6 shadow-[0_10px_30px_rgba(15,75,48,0.05)] sm:p-8">
           <div className="absolute -right-10 -top-14 h-44 w-44 rounded-full bg-white/70 blur-2xl" />
+
           <div className="relative flex flex-col justify-between gap-6 md:flex-row md:items-center">
             <div className="flex items-start gap-4">
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-[#D7EDE0] bg-white shadow-sm">
-                <ShieldCheck size={23} className="text-[#159B59]" />
+                <ShieldCheck
+                  size={23}
+                  className="text-[#159B59]"
+                />
               </div>
+
               <div>
                 <p className="mb-1 text-[11px] font-bold tracking-[0.16em] text-[#159B59]">
                   NEXT STEP
                 </p>
+
                 <h2 className="text-xl font-bold text-[#001E2B]">
                   Team Leader Actions
                 </h2>
+
                 <p className="mt-2 max-w-xl text-sm leading-6 text-[#64756F]">
                   Review reconstructed findings, verify supporting evidence,
                   and approve information before sharing the team handover.
@@ -392,6 +1126,7 @@ export default function Dashboard({
                   <CheckCircle2 size={17} />
                   Handover marked as shared
                 </div>
+
                 <p className="mt-2 text-sm text-[#64756F]">
                   {approvedCount} approved findings have been shared.
                 </p>
@@ -404,10 +1139,9 @@ export default function Dashboard({
           <Clock3 size={12} />
           Demonstration dashboard
           <span>·</span>
-          Sample data
-          <span>·</span>
-          Backend integration pending
+          Project list connected to backend
         </footer>
+
       </div>
     </main>
   );

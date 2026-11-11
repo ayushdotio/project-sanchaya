@@ -239,6 +239,12 @@ export default function App() {
   const [started, setStarted] = useState(false);
   const [user, setUser] = useState(null);
   const [activePage, setActivePage] = useState("dashboard");
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+
+  function handleNavigate(page, projectId) {
+    if (projectId) setSelectedProjectId(projectId);
+    setActivePage(page);
+  }
 
   const [approved, setApproved] = useState([]);
   const [shared, setShared] = useState(false);
@@ -307,7 +313,7 @@ export default function App() {
       {user?.role === "leader" && activePage === "dashboard" && (
         <Dashboard
           user={user}
-          onNavigate={setActivePage}
+          onNavigate={handleNavigate}
           shared={shared}
           approvedCount={approved.length}
         />
@@ -317,7 +323,7 @@ export default function App() {
       {user?.role === "outgoing" && activePage === "dashboard" && (
         <OutgoingDashboard
           user={user}
-          onNavigate={setActivePage}
+          onNavigate={handleNavigate}
         />
       )}
 
@@ -327,7 +333,7 @@ export default function App() {
           user={user}
           approved={approved}
           shared={shared}
-          onNavigate={setActivePage}
+          onNavigate={handleNavigate}
         />
       )}
 
@@ -337,7 +343,7 @@ export default function App() {
           user={user}
           approved={approved}
           shared={shared}
-          onNavigate={setActivePage}
+          onNavigate={handleNavigate}
         />
       )}
 
@@ -415,7 +421,10 @@ export default function App() {
 
       {/* SOURCE UPLOAD PAGE */}
       {user?.role === "leader" && activePage === "sources" && (
-        <SourceUpload onNavigate={setActivePage} />
+        <SourceUpload
+          onNavigate={handleNavigate}
+          projectId={selectedProjectId}
+        />
       )}
     </>
   );
