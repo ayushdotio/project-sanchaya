@@ -1,8 +1,18 @@
+import crypto from "crypto";
 import { Request, Response } from "express";
 import { Finding } from "../models/Finding.js";
 import { HandoverHistory } from "../models/HandoverHistory.js";
 import { Project } from "../models/Project.js";
 import { pythonBridge } from "../services/pythonBridge.js";
+
+const PREREQUISITE_CHECKLIST_KEYS = [
+  "sourcesVerified",
+  "decisionsBackedByEvidence",
+  "unfinishedTasksAssignedOrUnknown",
+  "blockersIdentified",
+  "conflictsDisclosed",
+  "recipientPermissionsChecked",
+] as const;
 
 const readinessController = async (
   req: Request,
@@ -11,7 +21,9 @@ const readinessController = async (
   const projectId = req.params.projectId as string;
 
   const project = await Project.findById(projectId)
-    .select("name readinessChecklist readinessStatus approvedBy approvedAt")
+    .select(
+      "name readinessChecklist readinessStatus approvedBy approvedAt approvedSnapshotHash",
+    )
     .populate("approvedBy", "name email");
 
   if (!project) {
@@ -26,6 +38,7 @@ const readinessController = async (
       checklist: project.readinessChecklist,
       approvedBy: project.approvedBy,
       approvedAt: project.approvedAt,
+      approvedSnapshotHash: project.approvedSnapshotHash ?? null,
     },
   });
 };
@@ -36,7 +49,7 @@ const riskMapController = async (
 ): Promise<void> => {
   const projectId = req.params.projectId as string;
 
-  const project = await Project.findById(projectId);
+  const project = (req as any).project || (await Project.findById(projectId));
   if (!project) {
     res.status(404).json({ success: false, error: "Project not found" });
     return;
@@ -56,7 +69,7 @@ const readinessEvaluateController = async (
 ): Promise<void> => {
   const projectId = req.params.projectId as string;
 
-  const project = await Project.findById(projectId);
+  const project = (req as any).project || (await Project.findById(projectId));
   if (!project) {
     res.status(404).json({ success: false, error: "Project not found" });
     return;
@@ -78,7 +91,7 @@ const readinessSignOffController = async (
   const projectId = req.params.projectId as string;
   const { checklistUpdates, evaluateWithAnalytics } = req.body || {};
 
-  const project = await Project.findById(projectId);
+  const project = (req as any).project || (await Project.findById(projectId));
   if (!project) {
     res.status(404).json({ success: false, error: "Project not found" });
     return;
@@ -100,22 +113,16 @@ const readinessSignOffController = async (
     Object.assign(project.readinessChecklist, checklistUpdates);
   }
 
-  // Record leader approval
-  project.readinessChecklist.leaderApprovalRecorded = true;
-
-  // Check if all 7 criteria are met
+  // Check prerequisite 6 criteria before recording leader sign-off
   const cl = project.readinessChecklist;
-  const allPassed =
-    cl.sourcesVerified &&
-    cl.decisionsBackedByEvidence &&
-    cl.unfinishedTasksAssignedOrUnknown &&
-    cl.blockersIdentified &&
-    cl.conflictsDisclosed &&
-    cl.recipientPermissionsChecked &&
-    cl.leaderApprovalRecorded;
+  const failingCriteria = PREREQUISITE_CHECKLIST_KEYS.filter((key) => !cl[key]);
 
-  if (!allPassed) {
+  if (failingCriteria.length > 0) {
+    project.readinessChecklist.leaderApprovalRecorded = false;
     project.readinessStatus = "Ready for Review";
+    project.approvedBy = null;
+    project.approvedAt = null;
+    project.approvedSnapshotHash = null;
     await project.save();
 
     res.status(400).json({
@@ -125,14 +132,30 @@ const readinessSignOffController = async (
       data: {
         readinessStatus: project.readinessStatus,
         checklist: project.readinessChecklist,
+        failingCriteria,
       },
     });
     return;
   }
 
+  // Record leader approval once prerequisites pass
+  project.readinessChecklist.leaderApprovalRecorded = true;
   project.readinessStatus = "Approved for Sharing";
   project.approvedBy = req.user!.userId as any;
   project.approvedAt = new Date();
+  if (!project.approvedSnapshotHash) {
+    project.approvedSnapshotHash = crypto
+      .createHash("sha256")
+      .update(
+        JSON.stringify({
+          projectId: String(project._id),
+          approvedBy: String(project.approvedBy),
+          approvedAt: project.approvedAt.toISOString(),
+          checklist: project.readinessChecklist,
+        }),
+      )
+      .digest("hex");
+  }
   await project.save();
 
   // Record an immutable handover snapshot version in handover_history

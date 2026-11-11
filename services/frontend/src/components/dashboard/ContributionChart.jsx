@@ -17,62 +17,109 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 
-export default function ContributionChart({ riskMapData = null }) {
-  const chartData = useMemo(() => {
-    if (!riskMapData) {
-      return [];
-    }
+function buildContributionChartData(riskMapData) {
+  if (!riskMapData) {
+    return [];
+  }
 
-    // Format 1: author_shares list
-    if (Array.isArray(riskMapData.author_shares) && riskMapData.author_shares.length > 0) {
-      return riskMapData.author_shares.map((item) => ({
-        member: item.author || item.contributor || "Unknown",
-        contribution: Math.round(item.commit_percentage ?? item.percentage ?? 0),
-      }));
-    }
+  // Format 1: author_shares list
+  if (Array.isArray(riskMapData.author_shares) && riskMapData.author_shares.length > 0) {
+    return riskMapData.author_shares.map((item) => ({
+      member: item.author || item.contributor || "Unknown",
+      contribution: Math.round(item.commit_percentage ?? item.percentage ?? 0),
+    }));
+  }
 
-    // Format 2: units breakdown from Analytics Service
-    if (Array.isArray(riskMapData.units) && riskMapData.units.length > 0) {
-      const contributorStats = {};
-      let totalChanges = 0;
+  // Format 2: units breakdown from Analytics Service
+  if (Array.isArray(riskMapData.units) && riskMapData.units.length > 0) {
+    const contributorStats = {};
+    let totalChanges = 0;
 
-      riskMapData.units.forEach((u) => {
+    riskMapData.units.forEach((u) => {
+      if (u.contributor_commits && typeof u.contributor_commits === "object") {
+        Object.entries(u.contributor_commits).forEach(([author, commits]) => {
+          const count = Number(commits) || 0;
+          if (count > 0) {
+            contributorStats[author] = (contributorStats[author] || 0) + count;
+            totalChanges += count;
+          }
+        });
+      } else {
         const author = u.top_contributor || "Other";
-        const changes = u.total_changes || 1;
+        const changes = Number(u.total_changes) || 1;
         contributorStats[author] = (contributorStats[author] || 0) + changes;
         totalChanges += changes;
-      });
-
-      if (totalChanges > 0) {
-        return Object.entries(contributorStats)
-          .map(([member, changes]) => ({
-            member,
-            contribution: Math.round((changes / totalChanges) * 100),
-          }))
-          .sort((a, b) => b.contribution - a.contribution);
       }
-    }
+    });
 
-    // Format 3: Array of raw RiskMap documents
-    if (Array.isArray(riskMapData) && riskMapData.length > 0) {
-      const contributorShares = {};
-      riskMapData.forEach((r) => {
-        const c = r.primaryContributor || "Unknown";
-        const p = r.contributionPercentage || 0;
-        if (!contributorShares[c] || p > contributorShares[c]) {
-          contributorShares[c] = p;
-        }
-      });
-      return Object.entries(contributorShares)
-        .map(([member, contribution]) => ({
+    if (totalChanges > 0) {
+      return Object.entries(contributorStats)
+        .map(([member, changes]) => ({
           member,
-          contribution: Math.round(contribution),
+          contribution: Math.round((changes / totalChanges) * 100),
         }))
         .sort((a, b) => b.contribution - a.contribution);
     }
+  }
 
-    return [];
-  }, [riskMapData]);
+  // Format 2b: task_groups fallback when no GitHub commits exist yet
+  if (Array.isArray(riskMapData.task_groups) && riskMapData.task_groups.length > 0) {
+    const contributorTasks = {};
+    let totalTasks = 0;
+
+    riskMapData.task_groups.forEach((tg) => {
+      if (tg.contributor_tasks && typeof tg.contributor_tasks === "object") {
+        Object.entries(tg.contributor_tasks).forEach(([author, tasks]) => {
+          const count = Number(tasks) || 0;
+          if (count > 0) {
+            contributorTasks[author] = (contributorTasks[author] || 0) + count;
+            totalTasks += count;
+          }
+        });
+      } else if (tg.top_contributor) {
+        const count = Number(tg.total_tasks) || 1;
+        contributorTasks[tg.top_contributor] =
+          (contributorTasks[tg.top_contributor] || 0) + count;
+        totalTasks += count;
+      }
+    });
+
+    if (totalTasks > 0) {
+      return Object.entries(contributorTasks)
+        .map(([member, count]) => ({
+          member,
+          contribution: Math.round((count / totalTasks) * 100),
+        }))
+        .sort((a, b) => b.contribution - a.contribution);
+    }
+  }
+
+  // Format 3: Array of raw RiskMap documents
+  if (Array.isArray(riskMapData) && riskMapData.length > 0) {
+    const contributorShares = {};
+    riskMapData.forEach((r) => {
+      const c = r.primaryContributor || "Unknown";
+      const p = r.contributionPercentage || 0;
+      if (!contributorShares[c] || p > contributorShares[c]) {
+        contributorShares[c] = p;
+      }
+    });
+    return Object.entries(contributorShares)
+      .map(([member, contribution]) => ({
+        member,
+        contribution: Math.round(contribution),
+      }))
+      .sort((a, b) => b.contribution - a.contribution);
+  }
+
+  return [];
+}
+
+export default function ContributionChart({ riskMapData = null }) {
+  const chartData = useMemo(
+    () => buildContributionChartData(riskMapData),
+    [riskMapData]
+  );
 
   const highestContribution = chartData.length > 0
     ? Math.max(...chartData.map((item) => item.contribution))
@@ -164,8 +211,8 @@ export default function ContributionChart({ riskMapData = null }) {
             </p>
 
             <p className="mt-1 text-xs leading-5 text-[#64756F]">
-              This is a deterministic distribution of recorded activity, not a
-              measurement of individual performance or expertise.
+              {riskMapData?.disclaimer ||
+                "This is a deterministic distribution of recorded activity, not a measurement of individual performance or expertise."}
             </p>
           </div>
         )}

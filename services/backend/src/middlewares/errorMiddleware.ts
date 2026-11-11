@@ -1,9 +1,10 @@
 import { Request, Response, NextFunction } from "express";
+import multer from "multer";
 
 export interface AppError extends Error {
   statusCode?: number;
   status?: number;
-  code?: number;
+  code?: number | string;
   value?: any;
   path?: string;
   errors?: Record<string, any>;
@@ -11,7 +12,7 @@ export interface AppError extends Error {
 
 /**
  * Standardized global 4-argument error-handling middleware.
- * Intercepts unhandled exceptions, normalizes Mongoose & validation errors,
+ * Intercepts unhandled exceptions, normalizes Mongoose, Multer & validation errors,
  * formats a consistent JSON envelope, and prevents stack trace leakage.
  */
 export const errorHandler = (
@@ -20,12 +21,26 @@ export const errorHandler = (
   res: Response,
   _next: NextFunction
 ): void => {
-  let statusCode = err.statusCode || err.status || 500;
+  let statusCode =
+    err.statusCode ||
+    err.status ||
+    500;
   let errorMessage = err.message || "Internal Server Error";
   let fieldErrors: Record<string, string[]> | undefined = err.errors;
 
+  // 0. Multer file upload errors (size limits, unexpected fields, etc.)
+  if (err instanceof multer.MulterError) {
+    if (err.code === "LIMIT_FILE_SIZE") {
+      statusCode = 413;
+      errorMessage = "Uploaded file exceeds the 10 MB size limit.";
+    } else {
+      statusCode = 400;
+      errorMessage = err.message || "Invalid file upload request";
+    }
+  }
+
   // 1. Mongoose CastError (e.g. invalid MongoDB ObjectId format in route parameter)
-  if (err.name === "CastError") {
+  else if (err.name === "CastError") {
     statusCode = 400;
     errorMessage = `Invalid identifier format: '${err.value}' for field '${err.path || "id"}'`;
   }

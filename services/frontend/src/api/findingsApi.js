@@ -30,33 +30,52 @@ export function normalizeFinding(raw) {
     evidence = raw.evidence.map((e) => ({
       sourceId: e.sourceId || e.source_id || raw.source_id || "",
       excerpt: e.excerpt || e.verbatim_excerpt || "",
+      evidence_origin: e.evidence_origin || raw.evidence_origin || "system",
     }));
   } else if (raw.source_id || raw.verbatim_excerpt) {
     evidence = [
       {
         sourceId: raw.source_id || "",
         excerpt: raw.verbatim_excerpt || "",
+        evidence_origin: raw.evidence_origin || "system",
       },
     ];
   }
 
+  const recheckRecommended = Boolean(
+    raw.freshness?.recheck_recommended ?? raw.needs_recheck ?? raw.recheck
+  );
+  const recheckReason =
+    raw.freshness?.reason || raw.recheck_reason || raw.recheckReason || "";
+
   return {
     id,
     _id: id,
-    category: raw.category || "General",
+    category: raw.category || "decision",
     claim: raw.claim || "",
+    topic: raw.topic || null,
     status,
-    rawStatus: raw.verification_status || raw.status,
+    rawStatus: raw.verification_status || raw.status || "Unknown",
     evidence,
+    source_id: raw.source_id || "",
+    verbatim_excerpt: raw.verbatim_excerpt || "",
+    conflicting_source_id: raw.conflicting_source_id || null,
+    conflict_details: raw.conflict_details || null,
+    explanation: raw.explanation || null,
+    freshness: raw.freshness || null,
+    sourceUpdatedAt: raw.freshness?.source_updated_at || null,
     evidence_origin: raw.evidence_origin || "system",
     evidence_badge: raw.evidence_badge || (raw.evidence_origin === "self_reported" ? "Self-reported" : ""),
-    recheck: Boolean(raw.needs_recheck || raw.recheck),
-    recheckReason: raw.recheck_reason || raw.recheckReason || "",
+    recheck: recheckRecommended,
+    recheckReason,
     review,
+    reviewedBy: raw.reviewedBy || null,
+    reviewedAt: raw.reviewedAt || null,
     edited: Boolean(raw.edited),
-    owner: raw.owner || null,
-    deadline: raw.deadline || null,
-    rationale: raw.rationale || null,
+    editedAt: raw.editedAt || null,
+    owner: raw.owner ?? null,
+    deadline: raw.deadline ?? null,
+    rationale: raw.rationale ?? null,
     createdAt: raw.createdAt || raw.created_at,
     updatedAt: raw.updatedAt || raw.updated_at,
   };
@@ -84,13 +103,37 @@ export function normalizeSource(raw) {
 
 /**
  * Fetch candidate findings for a project.
+ * Optional filters: { status, category, review_status, source_id, recheck }
  */
-export async function getFindings(projectId) {
+export async function getFindings(projectId, filters = {}) {
   if (!projectId) {
     return [];
   }
 
-  const result = await client.get(`/projects/${encodeURIComponent(projectId)}/findings`);
+  const params = {};
+  if (filters && typeof filters === "object") {
+    if (filters.status && filters.status !== "all") {
+      params.status = filters.status;
+    }
+    if (filters.category && filters.category !== "all") {
+      params.category = filters.category;
+    }
+    if (filters.review_status && filters.review_status !== "all") {
+      params.review_status = filters.review_status;
+    }
+    if (filters.source_id) {
+      params.source_id = String(filters.source_id).trim();
+    }
+    if (filters.recheck === true || filters.recheck === "true") {
+      params.recheck = "true";
+    } else if (filters.recheck === false || filters.recheck === "false") {
+      params.recheck = "false";
+    }
+  }
+
+  const result = await client.get(`/projects/${encodeURIComponent(projectId)}/findings`, {
+    params: Object.keys(params).length > 0 ? params : undefined,
+  });
   const rawList = Array.isArray(result.data) ? result.data : result.findings || [];
   return rawList.map(normalizeFinding);
 }
@@ -164,10 +207,42 @@ export async function editFinding(projectId, findingId, dataOrClaim, reverify = 
     throw new Error("Project ID and Finding ID are required to edit a finding.");
   }
 
-  const payload =
+  const rawPayload =
     typeof dataOrClaim === "object" && dataOrClaim !== null
       ? dataOrClaim
       : { claim: dataOrClaim, reverify };
+
+  const payload = {};
+  if (rawPayload.claim !== undefined) {
+    const trimmedClaim = String(rawPayload.claim).trim();
+    if (!trimmedClaim) {
+      throw new Error("Claim cannot be empty.");
+    }
+    payload.claim = trimmedClaim;
+  }
+  if (rawPayload.category !== undefined) payload.category = rawPayload.category;
+  if (rawPayload.review_status !== undefined) payload.review_status = rawPayload.review_status;
+  if (rawPayload.owner !== undefined) {
+    payload.owner = rawPayload.owner === null ? null : String(rawPayload.owner).trim() || null;
+  }
+  if (rawPayload.deadline !== undefined) {
+    payload.deadline =
+      rawPayload.deadline === null ? null : String(rawPayload.deadline).trim() || null;
+  }
+  if (rawPayload.rationale !== undefined) {
+    payload.rationale =
+      rawPayload.rationale === null ? null : String(rawPayload.rationale).trim() || null;
+  }
+  if (rawPayload.topic !== undefined) {
+    payload.topic = rawPayload.topic === null ? null : String(rawPayload.topic).trim() || null;
+  }
+  if (rawPayload.reverify !== undefined) {
+    payload.reverify = Boolean(rawPayload.reverify);
+  }
+
+  if (Object.keys(payload).length === 0) {
+    throw new Error("At least one field must be provided to update a finding.");
+  }
 
   const result = await client.patch(
     `/projects/${encodeURIComponent(projectId)}/findings/${encodeURIComponent(findingId)}`,
@@ -198,8 +273,17 @@ export async function scanFreshness(projectId, options = {}) {
     throw new Error("Project ID is required.");
   }
 
-  return client.post(
+  const payload = {};
+  if (typeof options.maxAgeDays === "number" && options.maxAgeDays >= 1) {
+    payload.maxAgeDays = Math.floor(options.maxAgeDays);
+  }
+  if (typeof options.limit === "number" && options.limit >= 1) {
+    payload.limit = Math.floor(options.limit);
+  }
+
+  const result = await client.post(
     `/projects/${encodeURIComponent(projectId)}/findings/freshness-scan`,
-    options
+    payload
   );
+  return result?.data ?? result;
 }

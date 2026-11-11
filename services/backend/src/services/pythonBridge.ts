@@ -172,8 +172,14 @@ export class PythonBridge {
       error?.message ||
       fallbackMessage;
 
+    const isTimeout =
+      !upstreamStatus &&
+      (error?.code === "ECONNABORTED" || error?.code === "ETIMEDOUT");
+
     if (!upstreamStatus && error?.code === "ECONNREFUSED") {
       message = `${serviceName} is not running (${message}). Start the microservice on its configured port or via Docker Compose.`;
+    } else if (isTimeout) {
+      message = `${serviceName} timed out while processing the request. Retry with fewer sources or try again shortly.`;
     }
 
     console.error(`[PythonBridge: ${serviceName} Error]`, message);
@@ -183,6 +189,8 @@ export class PythonBridge {
       err.statusCode = upstreamStatus;
     } else if (upstreamStatus && upstreamStatus >= 500) {
       err.statusCode = upstreamStatus === 503 ? 503 : 502;
+    } else if (isTimeout) {
+      err.statusCode = 504;
     } else {
       err.statusCode = 503;
     }

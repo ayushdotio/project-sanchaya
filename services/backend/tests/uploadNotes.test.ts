@@ -169,6 +169,7 @@ describe("Upload & Fetch Meeting Notes API (/api/projects/:projectId/uploads/not
 
   it("returns 400 when no file is attached", async () => {
     mockAuthenticatedUser();
+    mock.method(Project, "findById", async () => ({ _id: PROJECT_ID }) as any);
     const token = signTestToken("leader");
 
     const res = await dispatchRequest(
@@ -184,8 +185,9 @@ describe("Upload & Fetch Meeting Notes API (/api/projects/:projectId/uploads/not
     assert.equal(res.body.error, "No document file uploaded");
   });
 
-  it("rejects unsupported file types in uploadMiddleware", async () => {
+  it("rejects unsupported file types in uploadMiddleware with 400", async () => {
     mockAuthenticatedUser();
+    mock.method(Project, "findById", async () => ({ _id: PROJECT_ID }) as any);
     const token = signTestToken("leader");
 
     const formData = new FormData();
@@ -203,7 +205,7 @@ describe("Upload & Fetch Meeting Notes API (/api/projects/:projectId/uploads/not
       },
     );
 
-    assert.equal(res.status, 500);
+    assert.equal(res.status, 400);
     assert.equal(res.body.success, false);
     assert.match(res.body.error, /Unsupported file type/i);
   });

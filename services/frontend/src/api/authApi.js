@@ -79,7 +79,7 @@ export async function login(email, password) {
           demoAccount.role
         );
         return registered;
-      } catch (regErr) {
+      } catch {
         // If registration fails because user already exists with different password, rethrow original
         throw err;
       }
@@ -136,8 +136,12 @@ export async function getCurrentUser() {
       setUser(refreshed);
       return refreshed;
     }
-  } catch {
-    // If /auth/me fails (e.g. offline or unauthorized), fallback to cached session if available
+  } catch (err) {
+    // Reject revoked/expired sessions immediately; only fallback on transient network/5xx failure
+    if (err?.status === 401 || err?.status === 403) {
+      clearAuth();
+      return null;
+    }
     if (cached && token) {
       return cached;
     }
@@ -150,6 +154,7 @@ export async function getCurrentUser() {
 
 export function logout() {
   clearAuth();
+  return client.post("/auth/logout").catch(() => null);
 }
 
 /**

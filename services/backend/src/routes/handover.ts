@@ -1,9 +1,11 @@
 import { Router } from "express";
+import { z } from "zod";
 import {
   authenticateToken,
   requireProjectMembership,
   requireRoles,
 } from "../middlewares/authMiddleware.js";
+import { validateParams, validateQuery } from "../middlewares/validate.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import {
   handoverReportController,
@@ -13,6 +15,16 @@ import {
 } from "../controllers/handover.controller.js";
 
 const router = Router();
+
+const objectIdRegex = /^[0-9a-fA-F]{24}$/;
+
+const projectParamsSchema = z.object({
+  projectId: z.string().regex(objectIdRegex, "Invalid projectId format"),
+});
+
+const exportPdfQuerySchema = z.object({
+  draft: z.enum(["true", "false"]).optional(),
+});
 
 /**
  * @name : Get Handover Report API
@@ -32,6 +44,7 @@ router.get(
   authenticateToken,
   requireRoles(["leader", "incoming"]),
   requireProjectMembership,
+  validateParams(projectParamsSchema),
   asyncHandler(handoverReportController),
 );
 
@@ -52,6 +65,8 @@ router.get(
   authenticateToken,
   requireRoles(["leader", "incoming"]),
   requireProjectMembership,
+  validateParams(projectParamsSchema),
+  validateQuery(exportPdfQuerySchema),
   asyncHandler(exportPDFController),
 );
 
@@ -70,6 +85,7 @@ router.post(
   authenticateToken,
   requireRoles(["incoming"]),
   requireProjectMembership,
+  validateParams(projectParamsSchema),
   asyncHandler(handoverAcknowledgementController),
 );
 
@@ -89,6 +105,7 @@ router.get(
   authenticateToken,
   requireRoles(["leader", "incoming"]),
   requireProjectMembership,
+  validateParams(projectParamsSchema),
   asyncHandler(handoverHistoryController),
 );
 

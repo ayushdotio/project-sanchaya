@@ -45,6 +45,9 @@ export interface IFinding extends Document {
   conflict_details?: IConflictDetails | null;
   freshness?: IFreshnessInfo | null;
   explanation?: string | null;
+  edited?: boolean;
+  editedBy?: Types.ObjectId | null;
+  editedAt?: Date | null;
   reviewedBy?: Types.ObjectId | null;
   reviewedAt?: Date | null;
   createdAt: Date;
@@ -146,6 +149,19 @@ const FindingSchema = new Schema<IFinding>(
     },
     explanation: {
       type: String,
+      default: null,
+    },
+    edited: {
+      type: Boolean,
+      default: false,
+    },
+    editedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    editedAt: {
+      type: Date,
       default: null,
     },
     reviewedBy: {

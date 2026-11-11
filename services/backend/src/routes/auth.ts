@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { authenticateToken } from "../middlewares/authMiddleware.js";
+import { createRateLimiter } from "../middlewares/rateLimitMiddleware.js";
 import { validateBody } from "../middlewares/validate.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import {
@@ -8,6 +9,7 @@ import {
   registerAsLeaderController,
   registerAsOutgoingController,
   loginController,
+  logoutController,
   getmeController,
   forgotPasswordController,
   resetPasswordController,
@@ -15,12 +17,52 @@ import {
 
 const router = Router();
 
+// Never cache authentication tokens, session checks, or password recovery responses
+router.use((_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  next();
+});
+
+const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
+
+const registerRateLimiter = createRateLimiter({
+  windowMs: FIFTEEN_MINUTES_MS,
+  maxRequests: 15,
+  keyPrefix: "auth:register",
+  message: "Too many registration attempts. Please try again later.",
+});
+
+const loginRateLimiter = createRateLimiter({
+  windowMs: FIFTEEN_MINUTES_MS,
+  maxRequests: 20,
+  keyPrefix: "auth:login",
+  message: "Too many login attempts. Please try again later.",
+});
+
+const passwordRecoveryRateLimiter = createRateLimiter({
+  windowMs: FIFTEEN_MINUTES_MS,
+  maxRequests: 10,
+  keyPrefix: "auth:recovery",
+  message: "Too many password recovery attempts. Please try again later.",
+});
+
 // Validation Schemas
 const registerSchema = z.object({
-  name: z.string().trim().min(2, "Name must be at least 2 characters"),
-  email: z.string().trim().email("Invalid email address"),
-  password: z.string()
+  name: z
+    .string()
+    .trim()
+    .min(2, "Name must be at least 2 characters")
+    .max(100, "Name must not exceed 100 characters"),
+  email: z
+    .string()
+    .trim()
+    .max(254, "Email address is too long")
+    .email("Invalid email address"),
+  password: z
+    .string()
     .min(8, "Password must be at least 8 characters")
+    .max(128, "Password must not exceed 128 characters")
     .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
     .regex(/[0-9]/, "Password must contain at least one number")
     .regex(/[^A-Za-z0-9]/, "Password must contain at least one special character"),
@@ -29,18 +71,34 @@ const registerSchema = z.object({
 });
 
 const loginSchema = z.object({
-  email: z.string().email("Invalid email address"),
-  password: z.string().min(1, "Password is required"),
+  email: z
+    .string()
+    .trim()
+    .max(254, "Email address is too long")
+    .email("Invalid email address"),
+  password: z
+    .string()
+    .min(1, "Password is required")
+    .max(128, "Password must not exceed 128 characters"),
 });
 
 const forgotPasswordSchema = z.object({
-  email: z.string().email("Invalid email address"),
+  email: z
+    .string()
+    .trim()
+    .max(254, "Email address is too long")
+    .email("Invalid email address"),
 });
 
 const resetPasswordSchema = z.object({
-  token: z.string().length(64, "Reset token must be exactly 64 characters"),
-  newPassword: z.string()
+  token: z
+    .string()
+    .trim()
+    .regex(/^[0-9a-fA-F]{64}$/, "Reset token must be a valid 64-character hex string"),
+  newPassword: z
+    .string()
     .min(8, "New password must be at least 8 characters")
+    .max(128, "New password must not exceed 128 characters")
     .regex(/[A-Z]/, "New password must contain at least one uppercase letter")
     .regex(/[0-9]/, "New password must contain at least one number")
     .regex(/[^A-Za-z0-9]/, "New password must contain at least one special character"),
@@ -63,7 +121,12 @@ const resetPasswordSchema = z.object({
  *      since Sanchaya does not currently gate registration behind email verification.
  *   6. Responds with `201 Created` containing `{ success: true, message, data: { token, user: { id, name, email, role } } }`.
  */
-router.post("/register", validateBody(registerSchema), asyncHandler(registerController));
+router.post(
+  "/register",
+  registerRateLimiter,
+  validateBody(registerSchema),
+  asyncHandler(registerController),
+);
 
 /**
  * @name : Register as Leader API
@@ -83,6 +146,7 @@ router.post("/register", validateBody(registerSchema), asyncHandler(registerCont
  */
 router.post(
   "/register-as-leader",
+  registerRateLimiter,
   validateBody(registerSchema),
   asyncHandler(registerAsLeaderController),
 );
@@ -95,6 +159,7 @@ router.post(
  */
 router.post(
   "/register-as-outgoing",
+  registerRateLimiter,
   validateBody(registerSchema),
   asyncHandler(registerAsOutgoingController),
 );
@@ -115,7 +180,20 @@ router.post(
  *      `HttpOnly` cookie (`token`, `sameSite: "lax"`, `secure` in production, `maxAge` from `env.JWT_EXPIRES_IN`).
  *   5. Responds with `200 OK` containing `{ success: true, message, data: { token, user: { id, name, email, role } } }`.
  */
-router.post("/login", validateBody(loginSchema), asyncHandler(loginController));
+router.post(
+  "/login",
+  loginRateLimiter,
+  validateBody(loginSchema),
+  asyncHandler(loginController),
+);
+
+/**
+ * @name : Logout API
+ * @route : POST /api/auth/logout
+ * @access : Public (idempotent cookie eviction)
+ * @description : Clears the HttpOnly authentication cookie (`token`) cleanly on logout.
+ */
+router.post("/logout", asyncHandler(logoutController));
 
 /**
  * @name : Get Current User API
@@ -147,6 +225,7 @@ router.get("/me", authenticateToken, asyncHandler(getmeController));
  */
 router.post(
   "/forgot-password",
+  passwordRecoveryRateLimiter,
   validateBody(forgotPasswordSchema),
   asyncHandler(forgotPasswordController),
 );
@@ -168,6 +247,7 @@ router.post(
  */
 router.post(
   "/reset-password",
+  passwordRecoveryRateLimiter,
   validateBody(resetPasswordSchema),
   asyncHandler(resetPasswordController),
 );

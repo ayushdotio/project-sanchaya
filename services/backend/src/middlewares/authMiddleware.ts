@@ -70,7 +70,9 @@ export const authenticateToken = async (
 
   let decoded: JWTPayload;
   try {
-    decoded = jwt.verify(token, env.JWT_SECRET) as JWTPayload;
+    decoded = jwt.verify(token, env.JWT_SECRET, {
+      algorithms: ["HS256"],
+    }) as JWTPayload;
   } catch (_err) {
     res.status(401).json({
       success: false,
@@ -79,9 +81,24 @@ export const authenticateToken = async (
     return;
   }
 
-  // Check if the token was issued before a password reset.
-  // Only hits the DB when passwordChangedAt is relevant — fast index lookup by _id.
-  const user = await User.findById(decoded.userId).select("+passwordChangedAt");
+  if (!decoded?.userId || typeof decoded.userId !== "string") {
+    res.status(401).json({
+      success: false,
+      error: "Unauthorized: Malformed token payload",
+    });
+    return;
+  }
+
+  // Check if the token was issued before a password reset and sync live DB role.
+  // Only hits the DB once via primary _id index.
+  let user: any;
+  try {
+    user = await User.findById(decoded.userId).select("+passwordChangedAt");
+  } catch (err) {
+    next(err);
+    return;
+  }
+
   if (!user) {
     res.status(401).json({
       success: false,
@@ -99,6 +116,14 @@ export const authenticateToken = async (
       });
       return;
     }
+  }
+
+  // Enforce immediate role changes (PUT /api/users/:id/role) even on existing JWTs
+  if (user.role) {
+    decoded.role = user.role;
+  }
+  if (user.email) {
+    decoded.email = user.email;
   }
 
   req.user = decoded;

@@ -46,9 +46,11 @@ export class StorageService {
 
     const privateKey = env.IMAGEKIT_PRIVATE_KEY?.trim();
     if (!privateKey) {
-      throw new Error(
+      const err = new Error(
         "ImageKit is not configured. Set IMAGEKIT_PRIVATE_KEY in the root .env file.",
-      );
+      ) as Error & { statusCode?: number };
+      err.statusCode = 503;
+      throw err;
     }
 
     this.client = new ImageKit({ privateKey });

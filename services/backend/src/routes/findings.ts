@@ -5,7 +5,7 @@ import {
   requireProjectMembership,
   requireRoles,
 } from "../middlewares/authMiddleware.js";
-import { validateBody } from "../middlewares/validate.js";
+import { validateBody, validateParams, validateQuery } from "../middlewares/validate.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import {
   inspectFindingsController,
@@ -19,15 +19,54 @@ import {
 
 const router = Router();
 
-const updateFindingSchema = z.object({
-  claim: z.string().min(1).optional(),
+const objectIdRegex = /^[0-9a-fA-F]{24}$/;
+
+const projectParamsSchema = z.object({
+  projectId: z.string().regex(objectIdRegex, "Invalid projectId format"),
+});
+
+const findingParamsSchema = z.object({
+  projectId: z.string().regex(objectIdRegex, "Invalid projectId format"),
+  findingId: z.string().regex(objectIdRegex, "Invalid findingId format"),
+});
+
+const listFindingsQuerySchema = z.object({
+  status: z
+    .enum([
+      "Supported",
+      "Needs review",
+      "Conflicting",
+      "Unknown",
+      "supported",
+      "needs_review",
+      "conflicting",
+      "unknown",
+    ])
+    .optional(),
+  verification_status: z
+    .enum(["Supported", "Needs review", "Conflicting", "Unknown"])
+    .optional(),
   category: z.enum(["decision", "task", "blocker", "dependency"]).optional(),
   review_status: z.enum(["pending", "approved", "rejected"]).optional(),
-  owner: z.string().nullable().optional(),
-  deadline: z.string().nullable().optional(),
-  rationale: z.string().nullable().optional(),
-  reverify: z.boolean().optional(),
+  source_id: z.string().trim().min(1).optional(),
+  recheck: z.enum(["true", "false"]).optional(),
 });
+
+const updateFindingSchema = z
+  .object({
+    claim: z.string().trim().min(1).optional(),
+    category: z.enum(["decision", "task", "blocker", "dependency"]).optional(),
+    review_status: z.enum(["pending", "approved", "rejected"]).optional(),
+    owner: z.string().trim().nullable().optional(),
+    deadline: z.string().trim().nullable().optional(),
+    rationale: z.string().trim().nullable().optional(),
+    topic: z.string().trim().nullable().optional(),
+    reverify: z.boolean().optional(),
+  })
+  .refine(
+    (data) => Object.values(data).some((value) => value !== undefined),
+    { message: "At least one field must be provided to update the finding." },
+  );
 
 const freshnessScanSchema = z
   .object({
@@ -55,6 +94,8 @@ router.get(
   authenticateToken,
   requireRoles(["leader", "outgoing"]),
   requireProjectMembership,
+  validateParams(projectParamsSchema),
+  validateQuery(listFindingsQuerySchema),
   asyncHandler(inspectFindingsController),
 );
 
@@ -68,6 +109,7 @@ router.post(
   authenticateToken,
   requireRoles(["leader"]),
   requireProjectMembership,
+  validateParams(projectParamsSchema),
   validateBody(freshnessScanSchema),
   asyncHandler(scanFindingsFreshnessController),
 );
@@ -82,6 +124,7 @@ router.patch(
   authenticateToken,
   requireRoles(["leader"]),
   requireProjectMembership,
+  validateParams(findingParamsSchema),
   validateBody(updateFindingSchema),
   asyncHandler(leaderEditFindingsController),
 );
@@ -96,6 +139,7 @@ router.post(
   authenticateToken,
   requireRoles(["leader"]),
   requireProjectMembership,
+  validateParams(findingParamsSchema),
   asyncHandler(reverifyFindingController),
 );
 
@@ -109,6 +153,7 @@ router.post(
   authenticateToken,
   requireRoles(["leader"]),
   requireProjectMembership,
+  validateParams(findingParamsSchema),
   asyncHandler(approveCandidateFindingsController),
 );
 router.patch(
@@ -116,6 +161,7 @@ router.patch(
   authenticateToken,
   requireRoles(["leader"]),
   requireProjectMembership,
+  validateParams(findingParamsSchema),
   asyncHandler(approveCandidateFindingsController),
 );
 
@@ -129,6 +175,7 @@ router.post(
   authenticateToken,
   requireRoles(["leader"]),
   requireProjectMembership,
+  validateParams(findingParamsSchema),
   asyncHandler(rejectCandidateFindingsController),
 );
 router.patch(
@@ -136,6 +183,7 @@ router.patch(
   authenticateToken,
   requireRoles(["leader"]),
   requireProjectMembership,
+  validateParams(findingParamsSchema),
   asyncHandler(rejectCandidateFindingsController),
 );
 

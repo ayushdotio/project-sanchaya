@@ -1,19 +1,27 @@
 import { client } from "./client.js";
 
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const NOTE_EXTENSIONS = [".pdf", ".docx", ".txt"];
+
 /**
  * Stage 1: Connect a GitHub repository to a project.
  * Verifies read-only access and binds repository to project.
  */
-export async function connectGithub(projectId, { repo, accessToken }) {
+export async function connectGithub(projectId, { repo, accessToken } = {}) {
   if (!projectId) {
     throw new Error("Project ID is required.");
   }
   if (!repo || !repo.trim()) {
-    throw new Error("Repository URL or name is required.");
+    throw new Error("Repository URL or name (owner/repo) is required.");
   }
 
+  const normalizedRepo = repo
+    .trim()
+    .replace(/\.git$/i, "")
+    .replace(/\/+$/, "");
+
   const payload = {
-    repo: repo.trim().replace(/\.git$/i, ""),
+    repo: normalizedRepo,
     ...(accessToken && accessToken.trim() ? { accessToken: accessToken.trim() } : {}),
   };
 
@@ -33,11 +41,28 @@ export async function syncGithub(projectId, options = {}) {
     throw new Error("Project ID is required.");
   }
 
+  const branches = Array.isArray(options.branches)
+    ? options.branches.map((b) => String(b).trim()).filter(Boolean)
+    : undefined;
+  const parsedLimit =
+    options.limit !== undefined && options.limit !== "" && options.limit !== null
+      ? Number(options.limit)
+      : undefined;
+
   const payload = {
-    ...(options.githubRepo ? { githubRepo: options.githubRepo } : {}),
-    ...(options.token ? { token: options.token } : {}),
-    ...(options.branches ? { branches: options.branches } : {}),
-    ...(options.limit ? { limit: options.limit } : {}),
+    ...(options.githubRepo && options.githubRepo.trim()
+      ? {
+          githubRepo: options.githubRepo
+            .trim()
+            .replace(/\.git$/i, "")
+            .replace(/\/+$/, ""),
+        }
+      : {}),
+    ...(options.token && options.token.trim() ? { token: options.token.trim() } : {}),
+    ...(branches && branches.length > 0 ? { branches } : {}),
+    ...(Number.isInteger(parsedLimit) && parsedLimit >= 1 && parsedLimit <= 100
+      ? { limit: parsedLimit }
+      : {}),
   };
 
   const result = await client.post(
@@ -57,6 +82,13 @@ export async function uploadMeetingNotes(projectId, file) {
   }
   if (!file) {
     throw new Error("File is required.");
+  }
+  const lowerName = (file.name || "").toLowerCase();
+  if (!NOTE_EXTENSIONS.some((ext) => lowerName.endsWith(ext))) {
+    throw new Error("Only .pdf, .docx, and .txt meeting note files are supported.");
+  }
+  if (file.size > MAX_UPLOAD_BYTES) {
+    throw new Error("File exceeds the 10 MB size limit.");
   }
 
   const formData = new FormData();
@@ -78,6 +110,12 @@ export async function uploadTaskTracker(projectId, file) {
   }
   if (!file) {
     throw new Error("File is required.");
+  }
+  if (!(file.name || "").toLowerCase().endsWith(".csv")) {
+    throw new Error("Only .csv task tracker files are supported.");
+  }
+  if (file.size > MAX_UPLOAD_BYTES) {
+    throw new Error("CSV file exceeds the 10 MB size limit.");
   }
 
   const formData = new FormData();

@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { GapQuestion } from "../models/GapQuestion.js";
 import { Finding } from "../models/Finding.js";
+import { Project } from "../models/Project.js";
 
 const listUnresolvedGapsController = async (
   req: Request,
@@ -39,8 +40,20 @@ const gapQuestionsController = async (
   res: Response,
 ): Promise<void> => {
   const { projectId } = req.params;
+  const { status, gap_category } = ((req as any).validatedQuery || req.query || {}) as {
+    status?: string;
+    gap_category?: string;
+  };
 
-  const questions = await GapQuestion.find({ projectId })
+  const filter: Record<string, any> = { projectId };
+  if (status) {
+    filter.status = status;
+  }
+  if (gap_category) {
+    filter.gap_category = gap_category;
+  }
+
+  const questions = await GapQuestion.find(filter)
     .populate(
       "relatedFindingId",
       "claim category verification_status source_id topic owner rationale",
@@ -55,7 +68,7 @@ const gapQuestionsController = async (
 
 const answerController = async (req: Request, res: Response): Promise<void> => {
   const { projectId, questionId } = req.params;
-  const { answer } = req.body;
+  const answer = String(req.body.answer || "").trim();
 
   const question = await GapQuestion.findOne({ _id: questionId, projectId });
   if (!question) {
@@ -76,6 +89,35 @@ const answerController = async (req: Request, res: Response): Promise<void> => {
       evidence_origin: "self_reported",
       verification_status: "Supported", // Now backed by departing member self-reported statement
     });
+  }
+
+  // Re-evaluate decisionsBackedByEvidence and invalidate stale approval if previously signed off
+  const project = (req as any).project || (await Project.findById(projectId as string));
+  if (project && project.readinessChecklist && typeof project.save === "function") {
+    const [totalDecisions, unverifiedDecisions] = await Promise.all([
+      Finding.countDocuments({ projectId, category: "decision" }),
+      Finding.countDocuments({
+        projectId,
+        category: "decision",
+        verification_status: { $ne: "Supported" },
+        review_status: { $ne: "approved" },
+      }),
+    ]);
+    project.readinessChecklist.decisionsBackedByEvidence =
+      totalDecisions > 0 && unverifiedDecisions === 0;
+
+    if (
+      project.readinessStatus === "Approved for Sharing" ||
+      project.readinessChecklist.leaderApprovalRecorded
+    ) {
+      project.readinessStatus = "Ready for Review";
+      project.readinessChecklist.leaderApprovalRecorded = false;
+      project.approvedBy = null;
+      project.approvedAt = null;
+      project.approvedSnapshotHash = null;
+    }
+
+    await project.save();
   }
 
   res.status(200).json({

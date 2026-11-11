@@ -5,7 +5,7 @@ import {
   requireProjectMembership,
   requireRoles,
 } from "../middlewares/authMiddleware.js";
-import { upload } from "../middlewares/uploadMiddleware.js";
+import { uploadNotes, uploadTasks } from "../middlewares/uploadMiddleware.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import {
   uploadNotesController,
@@ -46,7 +46,8 @@ router.post(
   ["/:projectId/uploads/notes", "/:projectId/upload-document"],
   authenticateToken,
   requireRoles(["leader", "outgoing"]),
-  upload.single("file"),
+  requireProjectMembership,
+  uploadNotes.single("file"),
   asyncHandler(uploadNotesController),
 );
 
@@ -96,7 +97,8 @@ router.post(
   ["/:projectId/uploads/tasks", "/:projectId/upload-tasks"],
   authenticateToken,
   requireRoles(["leader", "outgoing"]),
-  upload.single("file"),
+  requireProjectMembership,
+  uploadTasks.single("file"),
   asyncHandler(uploadTasksController),
 );
 
